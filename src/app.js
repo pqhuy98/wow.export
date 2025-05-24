@@ -688,7 +688,8 @@ document.addEventListener('click', function(e) {
 	tactKeys.load();
 
 	// Check for updates.
-	if (BUILD_RELEASE) {
+	const checkUpdate = false
+	if (BUILD_RELEASE && checkUpdate) {
 		core.view.isBusy++;
 		core.view.showLoadScreen('Checking for updates...');
 
