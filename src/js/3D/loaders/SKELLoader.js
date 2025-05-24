@@ -264,10 +264,13 @@ class SKELLoader {
 					await loader.load(true);
 
 					// If the .anim file is chunked, we need to load the skeletonBoneData.
-					if (loader.skeletonBoneData !== undefined)
+					if (loader.skeletonBoneData !== undefined) {
+						log.write('Use skeletonBoneData for .anim file ' + entry.animID + ' (' + AnimMapper.get_anim_name(entry.animID) + ') - ' + entry.subAnimID);
 						this.animFiles.set(i, BufferWrapper.from(loader.skeletonBoneData));
-					else
+					} else {
+						log.write('Use animData for .anim file ' + entry.animID + ' (' + AnimMapper.get_anim_name(entry.animID) + ') - ' + entry.subAnimID);
 						this.animFiles.set(i, BufferWrapper.from(loader.animData));
+					}
 				}
 			}
 

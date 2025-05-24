@@ -551,7 +551,7 @@ const exportCharModel = async () => {
 	
 	try {
 		const data = await casc.getFile(fileDataID);
-		const exportPath = ExportHelper.replaceExtension(ExportHelper.getExportPath(fileName), ".gltf");
+		const exportPath = ExportHelper.replaceExtension(ExportHelper.getExportPath(fileName), ".obj");
 		const exporter = new M2Exporter(data, [], fileDataID);
 
 		for (const [chrModelTextureTarget, chrMaterial] of chrMaterials)
@@ -560,7 +560,7 @@ const exportCharModel = async () => {
 		// Respect geoset masking for selected model.
 		exporter.setGeosetMask(core.view.chrCustGeosets);
 
-		await exporter.exportAsGLTF(exportPath, helper, fileManifest);
+		await exporter.exportAsOBJ(exportPath, false, helper, fileManifest);
 		await exportPaths?.writeLine('M2_GLTF:' + exportPath);
 
 		// Abort if the export has been cancelled.
