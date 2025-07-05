@@ -134,7 +134,7 @@ class M2Exporter {
 				texture.fileDataID = targetFileDataID;
 			}
 
-			if (!Number.isNaN(texFileDataID) && texFileDataID > 0) {
+			if ((typeof texFileDataID === 'string' && texFileDataID.startsWith('data-')) || (!Number.isNaN(texFileDataID) && texFileDataID > 0)) {
 				try {
 					let texFile = texFileDataID + (raw ? '.blp' : '.png');
 					let texPath = path.join(out, texFile);
@@ -320,17 +320,19 @@ class M2Exporter {
 
 			let texture = null;
 			const texUnit = skin.textureUnits.find(tex => tex.skinSectionIndex === mI);
-			if (texUnit)
+			if (texUnit) {
 				texture = this.m2.textures[this.m2.textureCombos[texUnit.textureComboIndex]];
+				// Patch for data textures
+				const texType = this.m2.textureTypes[this.m2.textureCombos[texUnit.textureComboIndex]];
+				if (this.dataTextures.has(texType)) 
+					texture.fileDataID = 'data-' + texType;
+			}
 
 			let matName;
-			if (texture?.fileDataID > 0 && textureMap.has(texture.fileDataID))
-				matName = texture.fileDataID;
-
-			if (this.dataTextures.has(this.m2.textureTypes[this.m2.textureCombos[texUnit.textureComboIndex]])) {
-				matName = 'data-' + this.m2.textureTypes[this.m2.textureCombos[texUnit.textureComboIndex]];
-				console.log("Setting meshIndex " + mI + " to " + matName);
-			}
+			if (texture?.fileDataID && textureMap.has(texture.fileDataID))
+				matName = textureMap.get(texture.fileDataID).matName;
+			else
+				console.warn(`No material for mesh ${mI}, fileDataID: ${texture?.fileDataID}`);
 
 			gltf.addMesh(GeosetMapper.getGeosetName(mI, mesh.submeshID), indices, matName);
 		}
@@ -534,12 +536,35 @@ class M2Exporter {
 
 			let texture = null;
 			const texUnit = skin.textureUnits.find(tex => tex.skinSectionIndex === mI);
-			if (texUnit)
+			if (texUnit) {
 				texture = this.m2.textures[this.m2.textureCombos[texUnit.textureComboIndex]];
+				// Patch for data textures
+				const texType = this.m2.textureTypes[this.m2.textureCombos[texUnit.textureComboIndex]];
+				if (this.dataTextures.has(texType)) 
+					texture.fileDataID = 'data-' + texType;
+				
+			}
 
 			let matName;
-			if (texture?.fileDataID > 0 && validTextures.has(texture.fileDataID))
-				matName = validTextures.get(texture.fileDataID).matName;
+			// Handle both Map and array cases
+			let textureInfo = null;
+			if (validTextures instanceof Map) {
+				if (texture?.fileDataID && validTextures.has(texture.fileDataID)) 
+					textureInfo = validTextures.get(texture.fileDataID);
+				
+			} else {
+				// Find in array
+				for (const [key, value] of validTextures) {
+					if (key === texture?.fileDataID) {
+						textureInfo = value;
+						break;
+					}
+				}
+			}
+			
+			if (textureInfo) 
+				matName = textureInfo.matName;
+			
 
 			obj.addMesh(GeosetMapper.getGeosetName(mI, mesh.submeshID), verts, matName);
 		}
