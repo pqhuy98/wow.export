@@ -325,7 +325,24 @@ A listfile is only loaded if wow.export has an active CASC installation active. 
 
 ### `EXPORT_MODEL`
 
-Instructs wow.export to export one or more 3D models. The `fileDataID` property can be provided as a number, or an array of numbers, each one must be a valid `fileDataID` for an M2/WMO model.
+Instructs wow.export to export one or more 3D models with optional skin selection.
+
+**Legacy Format (backward compatible):**
+| Property | Type | Required |
+| --- | --- | --- |
+| fileDataID | number\|number[] | Yes |
+
+**Enhanced Format (with skin support):**
+| Property | Type | Required |
+| --- | --- | --- |
+| models | ModelExport[] | Yes |
+
+**ModelExport structure:**
+| Property | Type | Required | Description |
+| --- | --- | --- | --- |
+| fileDataID | number | Yes | FileDataID of the model |
+| skinID | number | No | Specific texture FileDataID to use (from `textureIDs` array in `GET_MODEL_SKINS` response) |
+| skinName | string | No | Skin name to match (use the `id` field from `GET_MODEL_SKINS` response) |
 
 If the export is successfully started, the server will send a `EXPORT_START` message with an `exportID` property, which can be used in conjunction with the `HOOK_EXPORT_COMPLETE` hook, with the `type` as `MODELS`.
 
@@ -333,9 +350,39 @@ To configure export parameters, such as toggling RGBA channel visibility on an e
 
 If no CASC installation is loaded in wow.export, `ERR_NO_CASC` will be returned.
 
-| Property | Type | Required |
-| --- | --- | --- |
-| fileDataID | number\|number[] | Yes |
+**Examples:**
+```javascript
+// Legacy format (default skins)
+{ id: 'EXPORT_MODEL', fileDataID: [12345, 67890] }
+
+// New format with specific skins
+{ 
+  id: 'EXPORT_MODEL', 
+  models: [
+    { fileDataID: 12345, skinID: 67890 },           // Use specific texture ID
+    { fileDataID: 67890, skinName: "base (123)" },  // Use skin name from GET_MODEL_SKINS
+    { fileDataID: 11111 }                            // Default skin
+  ]
+}
+```
+
+**Workflow Example:**
+```javascript
+// 1. Get available skins for a model
+client.write({ id: 'GET_MODEL_SKINS', fileDataID: 12345 });
+const response = await client.forMessage('MODEL_SKINS');
+
+// 2. Export with a specific skin
+client.write({ 
+  id: 'EXPORT_MODEL', 
+  models: [
+    { 
+      fileDataID: 12345, 
+      skinID: response.skins[0].textureIDs[0]  // Use first texture ID
+    }
+  ]
+});
+```
 
 ### `EXPORT_TEXTURE`
 
@@ -348,6 +395,82 @@ If no CASC installation is loaded in wow.export, `ERR_NO_CASC` will be returned.
 | Property | Type | Required |
 | --- | --- | --- |
 | fileDataID | number\|number[] | Yes |
+
+### `EXPORT_CHARACTER`
+
+Instructs wow.export to export a character model with customizations. This method allows exporting characters with specific race, gender, and customization settings.
+
+If the export is successfully started, the server will send a `EXPORT_START` message with an `exportID` property, which can be used in conjunction with the `HOOK_EXPORT_COMPLETE` hook, with the `type` as `CHARACTERS`.
+
+If no CASC installation is loaded in wow.export, `ERR_NO_CASC` will be returned.
+
+| Property | Type | Required | Description |
+| --- | --- | --- | --- |
+| race | number | Yes | Race ID (e.g., 1 for Human, 2 for Orc) |
+| gender | number | Yes | Gender ID (0 for Male, 1 for Female) |
+| customizations | object | Yes | Customization options as key-value pairs where key is optionID and value is choiceID |
+| include_animations | boolean | No | Whether to include animations (default: true) |
+| include_base_clothing | boolean | No | Whether to include base clothing (default: false) |
+
+**Example:**
+```javascript
+{
+  id: 'EXPORT_CHARACTER',
+  race: 1,  // Human
+  gender: 0,  // Male
+  customizations: {
+    "1": 0,   // Hair Style: Option 1, Choice 0
+    "2": 1,   // Hair Color: Option 2, Choice 1
+    "3": 2    // Face: Option 3, Choice 2
+  },
+  include_animations: true,
+  include_base_clothing: false
+}
+```
+
+### `GET_MODEL_SKINS`
+
+Instructs wow.export to retrieve all available skins for a given model fileDataID. This is useful for discovering what skins are available before exporting a model.
+
+If no CASC installation is loaded in wow.export, `ERR_NO_CASC` will be returned.
+
+| Property | Type | Required |
+| --- | --- | --- |
+| fileDataID | number | Yes |
+
+**Response:** `MODEL_SKINS`
+
+**Example:**
+```javascript
+// Request
+{ id: 'GET_MODEL_SKINS', fileDataID: 12345 }
+
+// Response
+{
+  id: 'MODEL_SKINS',
+  fileDataID: 12345,
+  skins: [
+    {
+      id: 'base (123)',
+      label: 'base (123)',
+      displayID: 123,
+      textureIDs: [67890],
+      extraGeosets: []
+    },
+    {
+      id: 'red (124)',
+      label: 'red (124)',
+      displayID: 124,
+      textureIDs: [67891],
+      extraGeosets: [1, 2]
+    }
+  ]
+}
+```
+
+**Note:** To use a skin in `EXPORT_MODEL`, use either:
+- `skinID`: The first value from the `textureIDs` array
+- `skinName`: The `id` field from the skin object
 
 ---
 
@@ -464,6 +587,24 @@ Sent in response to a `LISTFILE_SEARCH` request.
 | --- | --- | --- |
 | fileDataID | number |
 | fileName | string |
+
+### `MODEL_SKINS`
+
+Sent in response to a `GET_MODEL_SKINS` request.
+
+| Property | Type | Note |
+| --- | --- | --- |
+| fileDataID | number | The model fileDataID that was queried |
+| skins | ModelSkin[] | Array of available skins |
+
+**ModelSkin structure**:
+| Property | Type | Note |
+| --- | --- | --- |
+| id | string | Unique skin identifier |
+| label | string | Human-readable skin name |
+| displayID | number | Display ID from the database |
+| textureIDs | number[] | Array of texture fileDataIDs |
+| extraGeosets | number[] | Array of extra geoset IDs for this skin |
 
 ### `CASC_UNAVAILABLE`
 

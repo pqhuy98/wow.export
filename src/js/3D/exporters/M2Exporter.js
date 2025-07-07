@@ -45,8 +45,16 @@ class M2Exporter {
 	/**
 	 * Export additional texture from canvas
 	 */
-	async addURITexture(out, dataURI) {
-		this.dataTextures.set(out, dataURI);
+	async addURITexture(out, dataURI, filename = null) {
+		this.dataTextures.set(out, { dataURI, filename });
+	}
+
+	/**
+	 * Set merged attachments for head model exports
+	 * @param {Array} mergedAttachments - Merged attachments from main model
+	 */
+	setMergedAttachments(mergedAttachments) {
+		this.mergedAttachments = mergedAttachments;
 	}
 
 	/**
@@ -73,15 +81,30 @@ class M2Exporter {
 		let textureIndex = 0;
 
 		// Export data textures first.
-		for (const [textureName, dataTexture] of this.dataTextures) {
+		for (const [textureName, dataTextureInfo] of this.dataTextures) {
 			try {
-				let texFile = 'data-' + textureName + '.png';
+				const { dataURI, filename } = dataTextureInfo;
+				
+				// Use original filename if available, otherwise fall back to generic name
+				let texFile;
+				let matName;
+				
+				if (filename) {
+					// Extract base name from filename and use it for the texture file
+					const baseName = path.basename(filename, '.blp');
+					texFile = baseName + '.png';
+					matName = 'mat_' + baseName;
+					console.log(`[DEBUG] Using original filename: ${filename} -> ${texFile}`);
+				} else {
+					// Fall back to generic naming
+					texFile = 'data-' + textureName + '.png';
+					matName = 'mat_' + textureName;
+				}
+				
 				let texPath = path.join(out, texFile);
 
-				const matName = 'mat_' + textureName;
-
 				if (config.overwriteFiles || !await generics.fileExists(texPath)) {
-					const data = BufferWrapper.fromBase64(dataTexture.replace(/^data[^,]+,/,''));
+					const data = BufferWrapper.fromBase64(dataURI.replace(/^data[^,]+,/,''));
 					log.write('Exporting data texture %d -> %s', textureName, texPath);
 					await data.writeToFile(texPath);
 				} else {
@@ -92,6 +115,7 @@ class M2Exporter {
 					texFile = ExportHelper.win32ToPosix(texFile);
 
 				mtl?.addMaterial(matName, texFile);
+				// Use 'data-' + textureName as the key since that's what the M2 model expects
 				validTextures.set('data-' + textureName, {
 					matName: fullTexPaths ? texFile : matName,
 					matPathRelative: texFile,
@@ -112,15 +136,19 @@ class M2Exporter {
 			const textureType = this.m2.textureTypes[textureIndex];
 			let texFileDataID = texture.fileDataID;
 
+			// Skip data textures in this section as they're already processed in the data textures section
+			if (this.dataTextures.has(textureType)) {
+				// Skip data textures here - they're already processed above
+				textureIndex++;
+				continue;
+			}
+
 			//TODO: Use m2.materials[texUnit.materialIndex].flags & 0x4 to determine if it's double sided
 			
 			if (textureType > 0) {
 				let targetFileDataID = 0;
 
-				if (this.dataTextures.has(textureType)) {
-					// Not a fileDataID, but a data texture.
-					targetFileDataID = 'data-' + textureType;
-				} else if (textureType >= 11 && textureType < 14) {
+				if (textureType >= 11 && textureType < 14) {
 					// Creature textures.
 					targetFileDataID = this.variantTextures[textureType - 11];
 				} else if (textureType > 1 && textureType < 5) {
@@ -133,7 +161,7 @@ class M2Exporter {
 				// the MTL exports with the correct texture once we swap it here.
 				texture.fileDataID = targetFileDataID;
 			}
-
+			
 			if ((typeof texFileDataID === 'string' && texFileDataID.startsWith('data-')) || (!Number.isNaN(texFileDataID) && texFileDataID > 0)) {
 				try {
 					let texFile = texFileDataID + (raw ? '.blp' : '.png');
@@ -143,7 +171,12 @@ class M2Exporter {
 					let matName = 'mat_' + texFileDataID;
 					let fileName = listfile.getByID(texFileDataID);
 
-					if (fileName !== undefined) {
+					// For data textures, texFileDataID might be a base filename instead of a fileDataID
+					if (fileName === undefined && typeof texFileDataID === 'string' && !texFileDataID.startsWith('data-')) {
+						// This is likely a data texture with a proper filename
+						fileName = texFileDataID + '.blp';
+						matName = 'mat_' + texFileDataID;
+					} else if (fileName !== undefined) {
 						matName = 'mat_' + path.basename(fileName.toLowerCase(), '.blp');
 
 						// Remove spaces from material name for MTL compatibility.
@@ -462,6 +495,15 @@ class M2Exporter {
 
 			json.addProperty('boneWeights', this.m2.boneWeights);
 			json.addProperty('boneIndicies', this.m2.boneIndices);
+
+			// Add attachments: model's own attachments first, then merged attachments, else empty array
+			if (this.m2.attachments && this.m2.attachments.length > 0) 
+				json.addProperty('attachments', this.m2.attachments);
+			else if (this.mergedAttachments && this.mergedAttachments.length > 0) 
+				json.addProperty('attachments', this.mergedAttachments);
+			else 
+				json.addProperty('attachments', []);
+			
 
 			await json.write(config.overwriteFiles);
 		}

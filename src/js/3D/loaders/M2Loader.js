@@ -390,21 +390,36 @@ class M2Loader {
 		const attachmentCount = this.data.readUInt32LE();
 		const attachmentOffset = this.data.readUInt32LE();
 
-		const base = this.data.offset;
-		this.data.seek(attachmentOffset + ofs);
 
-		const entries = this.attachments = new Array(attachmentCount);
-		for (let i = 0; i < attachmentCount; i++) {
-			entries[i] = {
-				id: this.data.readUInt32LE(),
-				bone: this.data.readUInt16LE(),
-				unknown: this.data.readUInt16LE(),
-				position: this.data.readFloatLE(3),
-				animateAttached: M2Generics.read_m2_track(this.data, this.md21Ofs, "uint8"),
-			};
+		// Check if attachments are valid
+		if (attachmentCount > 0 && attachmentOffset > 0) {
+			const base = this.data.offset;
+			this.data.seek(attachmentOffset + ofs);
+
+			const entries = this.attachments = new Array(attachmentCount);
+			for (let i = 0; i < attachmentCount; i++) {
+				entries[i] = {
+					id: this.data.readUInt32LE(),
+					bone: this.data.readUInt16LE(),
+					unknown: this.data.readUInt16LE(),
+					position: this.data.readFloatLE(3),
+					animateAttached: M2Generics.read_m2_track(this.data, this.md21Ofs, "uint8"),
+				};
+
+				// Convert attachment position coordinate system
+				// According to wowdev, attachments use the same coordinate system as bones
+				const pos = entries[i].position;
+				const posX = pos[0];
+				const posY = pos[1];
+				const posZ = pos[2];
+				pos[0] = posX;
+				pos[2] = posY * -1;
+				pos[1] = posZ;
+
+			}
+
+			this.data.seek(base);
 		}
-
-		this.data.seek(base);
 	}
 
 	/**
