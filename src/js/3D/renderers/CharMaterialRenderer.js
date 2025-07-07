@@ -35,14 +35,20 @@ class CharMaterialRenderer {
 
 	/**
 	 * Construct a new CharMaterialRenderer instance.
+	 * @param {string|number} textureLayer
+	 * @param {number} width
+	 * @param {number} height
+	 * @param {boolean} headless - If true, do not attach canvas to overlay (default: false)
 	 */
-	constructor(textureLayer, width, height) {
+	constructor(textureLayer, width, height, headless = false) {
 		this.textureTargets = [];
+		this.headless = headless;
 
 		const canvas = document.createElement('canvas');
-		canvas.id = 'charMaterialCanvas-' + textureLayer;
-
-		overlay.add(canvas);
+		if (!headless) {
+			canvas.id = 'charMaterialCanvas-' + textureLayer;
+			overlay.add(canvas);
+		}
 
 		canvas.width = width;
 		canvas.height = height;
@@ -121,7 +127,9 @@ class CharMaterialRenderer {
 		}
 
 		this.clearCanvas();
-		overlay.remove(this.glCanvas);
+		if (!this.headless) 
+			overlay.remove(this.glCanvas);
+		
 
 		this.gl.getExtension('WEBGL_lose_context').loseContext();
 		this.glCanvas = null;

@@ -21,6 +21,8 @@ function get_element() {
 }
 
 function update_button_visibility() {
+	if (!$buttons) return;
+	
 	if (layers.length > 1)
 		$buttons.style.display = 'flex';
 	else

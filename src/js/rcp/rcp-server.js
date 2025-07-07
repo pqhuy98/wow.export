@@ -403,12 +403,35 @@ class RCPServer {
 	}
 
 	/**
-	 * Handle an incoming EXPORT_MODEL request.
+	 * Handle an incoming EXPORT_MODEL request with skin support.
 	 * @param {object} data 
 	 * @param {RCPConnection} client 
 	 */
 	handleExportModel(data, client) {
-		this.handleExport('rcp-export-models', data, client);
+		if (!core.view.casc)
+			return client.sendData('ERR_NO_CASC');
+
+		// Support both old and new format
+		let models = [];
+		if (data.fileDataID) {
+			// Legacy format: convert to new format
+			const fileDataIDs = Array.isArray(data.fileDataID) ? data.fileDataID : [data.fileDataID];
+			models = fileDataIDs.map(id => ({ fileDataID: id }));
+		} else if (data.models) {
+			// New format with skin support
+			if (!this.validateParameters(client, data, { models: 'object[]' }))
+				return;
+			models = data.models;
+		} else {
+			return client.sendData('ERR_INVALID_PARAMETERS', { 
+				required: { fileDataID: ['number', 'number[]'], models: 'object[]' } 
+			});
+		}
+
+		const id = exportID++;
+		client.sendData('EXPORT_START', { exportID: id });
+
+		core.events.emit('rcp-export-models', models, id);
 	}
 
 	/**
@@ -418,6 +441,49 @@ class RCPServer {
 	 */
 	handleExportTexture(data, client) {
 		this.handleExport('rcp-export-textures', data, client);
+	}
+
+	/**
+	 * Handle an incoming EXPORT_CHARACTER request.
+	 * @param {object} data 
+	 * @param {RCPConnection} client 
+	 */
+	handleExportCharacter(data, client) {
+		log.write('[RCP] EXPORT_CHARACTER received: %o', data); // Add this line
+		if (!core.view.casc)
+			return client.sendData('ERR_NO_CASC');
+
+		if (!this.validateParameters(client, data, { 
+			race: 'number', 
+			gender: 'number',
+			customizations: 'object',
+			geosetIds: "object",
+			include_animations: 'boolean',
+			include_base_clothing: 'boolean'
+		}))
+			return;
+
+		const id = exportID++;
+		client.sendData('EXPORT_START', { exportID: id });
+
+		// Emit the character export event
+		core.events.emit('rcp-export-character', data, id);
+	}
+
+	/**
+	 * Handle an incoming GET_MODEL_SKINS request.
+	 * @param {object} data 
+	 * @param {RCPConnection} client 
+	 */
+	handleGetModelSkins(data, client) {
+		if (!core.view.casc)
+			return client.sendData('ERR_NO_CASC');
+
+		if (!this.validateParameters(client, data, { fileDataID: 'number' }))
+			return;
+
+		// Emit the get model skins event
+		core.events.emit('rcp-get-model-skins', data.fileDataID, client);
 	}
 
 	/**
@@ -592,7 +658,9 @@ const SERVER_HANDLERS = {
 	LISTFILE_QUERY_NAME: RCPServer.prototype.handleListfileQueryName,
 	LISTFILE_SEARCH: RCPServer.prototype.handleListfileSearch,
 	EXPORT_MODEL: RCPServer.prototype.handleExportModel,
-	EXPORT_TEXTURE: RCPServer.prototype.handleExportTexture
+	EXPORT_TEXTURE: RCPServer.prototype.handleExportTexture,
+	EXPORT_CHARACTER: RCPServer.prototype.handleExportCharacter,
+	GET_MODEL_SKINS: RCPServer.prototype.handleGetModelSkins
 };
 
 module.exports = RCPServer;

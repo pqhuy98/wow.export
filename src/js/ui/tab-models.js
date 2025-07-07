@@ -295,10 +295,64 @@ const getVariantTextureIDs = (fileName) => {
 	}
 };
 
+/**
+ * Get texture IDs by skin name for a given model.
+ * @param {number} fileDataID 
+ * @param {string} skinName 
+ * @returns {Array}
+ */
+const getSkinTextureIDsByName = (fileDataID, skinName) => {
+	const displays = getModelDisplays(fileDataID);
+	if (!displays) return [];
+
+	// Find display with matching skin name
+	for (const display of displays) {
+		if (display.textures.length === 0) continue;
+		
+		const texture = display.textures[0];
+		const textureName = listfile.getByID(texture);
+		if (textureName) {
+			const cleanName = path.basename(textureName, '.blp');
+			if (cleanName.includes(skinName) || skinName === 'base') 
+				return display.textures;
+			
+		}
+	}
+	
+	// Fallback to first available skin
+	return displays.find(e => e.textures.length > 0)?.textures ?? [];
+};
+
 const exportFiles = async (files, isLocal = false, exportID = -1) => {
+	// Convert files to model format for exportFilesWithSkins
+	const models = files.map(file => {
+		if (typeof file === 'number') {
+			// Legacy format: fileDataID number
+			return { fileDataID: file };
+		} else if (file.fileDataID) {
+			// File entry format with fileDataID property
+			return { fileDataID: file.fileDataID };
+		} else {
+			// File entry format: extract fileDataID from filename
+			const fileName = listfile.stripFileEntry(file);
+			const fileDataID = listfile.getByFilename(fileName);
+			return { fileDataID: fileDataID };
+		}
+	});
+
+	return exportFilesWithSkins(models, isLocal, exportID);
+};
+
+
+/**
+ * Export files with skin-aware support for RCP.
+ * @param {Array} models Array of model objects with fileDataID and optional skin info
+ * @param {boolean} isLocal Whether the files are local
+ * @param {number} exportID Export ID for tracking
+ */
+const exportFilesWithSkins = async (models, isLocal = false, exportID = -1) => {
 	const exportPaths = core.openLastExportStream();
 	const format = core.view.config.exportModelFormat;
-
 	const manifest = { type: 'MODELS', exportID, succeeded: [], failed: [] };
 
 	if (format === 'PNG' || format === 'CLIPBOARD') {
@@ -331,10 +385,10 @@ const exportFiles = async (files, isLocal = false, exportID = -1) => {
 		}
 	} else {
 		const casc = core.view.casc;
-		const helper = new ExportHelper(files.length, 'model');
+		const helper = new ExportHelper(models.length, 'model');
 		helper.start();
 
-		for (const fileEntry of files) {
+		for (const entry of models) {
 			// Abort if the export has been cancelled.
 			if (helper.isCancelled())
 				return;
@@ -342,13 +396,20 @@ const exportFiles = async (files, isLocal = false, exportID = -1) => {
 			let fileName;
 			let fileDataID;
 
-			if (typeof fileEntry === 'number') {
-				fileDataID = fileEntry;
+			if (typeof entry === 'number') {
+				fileDataID = entry;
+				fileName = listfile.getByID(fileDataID);
+			} else if (entry.fileDataID) {
+				fileDataID = entry.fileDataID;
 				fileName = listfile.getByID(fileDataID);
 			} else {
-				fileName = listfile.stripFileEntry(fileEntry);
+				fileName = listfile.stripFileEntry(entry);
 				fileDataID = listfile.getByFilename(fileName);
 			}
+
+			// Check if we have a valid fileDataID
+			if (!fileDataID || isNaN(fileDataID)) 
+				throw new Error(`Invalid fileDataID: ${fileDataID}`);
 
 			const fileManifest = [];
 			
@@ -386,6 +447,21 @@ const exportFiles = async (files, isLocal = false, exportID = -1) => {
 
 				if (!fileType)
 					throw new Error('Unknown model file type for %d', fileDataID);
+
+				// Get variant texture IDs using skin-aware logic
+				let variantTextureIDs;
+				const { skinID, skinName } = entry;
+				
+				if (skinID) {
+					// Use specific skin ID
+					variantTextureIDs = [skinID];
+				} else if (skinName) {
+					// Use skin name lookup
+					variantTextureIDs = getSkinTextureIDsByName(fileDataID, skinName);
+				} else {
+					// Use default skin logic
+					variantTextureIDs = getVariantTextureIDs(fileName);
+				}
 
 				let exportPath;
 				if (isLocal) {
@@ -426,7 +502,7 @@ const exportFiles = async (files, isLocal = false, exportID = -1) => {
 						exportPath = ExportHelper.replaceExtension(exportPath, exportExtensions[format]);
 
 						if (fileType === MODEL_TYPE_M2) {
-							const exporter = new M2Exporter(data, getVariantTextureIDs(fileName), fileDataID);
+							const exporter = new M2Exporter(data, variantTextureIDs, fileDataID);
 
 							// Respect geoset masking for selected model.
 							if (fileName == activePath)
@@ -563,9 +639,66 @@ core.events.once('screen-tab-models', () => {
 	core.view.modelViewerContext = Object.seal({ camera, scene, controls: null });
 });
 
-core.events.on('rcp-export-models', (files, id) => {
-	// RCP should provide an array of fileDataIDs to export.
-	exportFiles(files, false, id);
+core.events.on('rcp-export-models', (models, id) => {
+	// RCP should provide an array of model objects with fileDataID and optional skin info
+	exportFilesWithSkins(models, false, id);
+});
+
+core.events.on('rcp-get-model-skins', (fileDataID, client) => {
+	// Get all available skins for the given model fileDataID
+	const displays = getModelDisplays(fileDataID);
+	const skins = [];
+
+	if (displays) {
+		let modelName = listfile.getByID(fileDataID);
+		if (modelName) {
+			modelName = path.basename(modelName, 'm2');
+
+			for (const display of displays) {
+				if (display.textures.length === 0)
+					continue;
+
+				const texture = display.textures[0];
+
+				let cleanSkinName = '';
+				let skinName = listfile.getByID(texture);
+				if (skinName !== undefined) {
+					// Display the texture name without path/extension.
+					skinName = path.basename(skinName, '.blp');
+					cleanSkinName = skinName.replace(modelName, '').replace('_', '');
+				} else {
+					// Handle unknown textures.
+					skinName = 'unknown_' + texture;
+				}
+
+				if (cleanSkinName.length === 0)
+					cleanSkinName = 'base';
+
+				if (display.extraGeosets?.length > 0)
+					skinName += display.extraGeosets.join(',');
+
+				cleanSkinName += ' (' + display.ID + ')';
+
+				// Check if we already have this skin
+				if (skins.some(s => s.id === skinName))
+					continue;
+
+				skins.push({
+					id: skinName,
+					label: cleanSkinName,
+					displayID: display.ID,
+					textureIDs: display.textures,
+					extraGeosets: display.extraGeosets || []
+				});
+			}
+		}
+	}
+
+	// Send the response back to the client
+	client.sendData('MODEL_SKINS', {
+		fileDataID: fileDataID,
+		skins: skins
+	});
 });
 
 core.registerLoadFunc(async () => {

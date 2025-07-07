@@ -15,6 +15,7 @@ const ExportHelper = require('../casc/export-helper');
 const listfile = require('../casc/listfile');
 const realmlist = require('../casc/realmlist');
 const DBCreatures = require('../db/caches/DBCreatures');
+const headlessExport = require('./headless-character');
 
 let camera;
 let scene;
@@ -84,6 +85,8 @@ function disposeSkinnedModels() {
 }
 
 async function uploadRenderOverrideTextures() {
+	if (!activeRenderer) return;
+	
 	for (const [chrModelTextureTarget, chrMaterial] of chrMaterials) {
 		await chrMaterial.update();
 		await activeRenderer.overrideTextureTypeWithCanvas(chrModelTextureTarget,  chrMaterial.getCanvas());
@@ -910,6 +913,52 @@ core.registerLoadFunc(async () => {
 
 	core.events.on('click-export-character', () => exportCharModel());
 	core.events.on('click-import-character', () => importCharacter());
+
+	// RPC character export handler
+	core.events.on('rcp-export-character', async (data, exportID) => {
+		console.log('[RPC] rcp-export-character event received:', data, exportID);
+		try {
+			// Check if CASC is loaded
+			if (!core.view.casc) {
+				console.error('[RPC] CASC not loaded');
+				console.log('[RPC] Dispatching HOOK_EXPORT_COMPLETE: CASC not loaded');
+				core.rcp.dispatchHook('HOOK_EXPORT_COMPLETE', { 
+					error: 'CASC not loaded. Please load a game installation first.', 
+					exportID,
+					type: 'CHARACTERS',
+					succeeded: [],
+					failed: [{ error: 'CASC not loaded. Please load a game installation first.' }]
+				});
+				return;
+			}
+
+			const { race, gender, customizations, geosetIds, exportPath } = data;
+			console.log('[RPC] Calling exportCharacterModelHeadless...');
+			const result = await headlessExport.exportCharacterModelHeadless({
+				casc: core.view.casc,
+				race: parseInt(race),
+				gender: parseInt(gender),
+				customizations,
+				geosetIds,
+				exportPath
+			});
+			console.log('[RPC] Export succeeded, dispatching HOOK_EXPORT_COMPLETE', { exportID, result });
+			core.rcp.dispatchHook('HOOK_EXPORT_COMPLETE', {
+				exportPath: result.exportPath,
+				fileName: result.fileName,
+				fileManifest: result.fileManifest,
+				exportID,
+			});
+		} catch (error) {
+			console.error('[RPC] character export failed (outer):', error);
+			console.log('[RPC] Dispatching HOOK_EXPORT_COMPLETE: error (outer)', error.message);
+			core.rcp.dispatchHook('HOOK_EXPORT_COMPLETE', { 
+				error: error.message, 
+				exportID,
+				type: 'CHARACTERS',
+			});
+		}
+	});
 
 	// User has changed the "Race" selection, ie "Human", "Orc", etc.
 	core.view.$watch('chrCustRaceSelection', () => updateChrModelList());
