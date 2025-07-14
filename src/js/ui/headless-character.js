@@ -260,13 +260,9 @@ async function mergeMainModelAttachmentsIfHead(fileDataID, exporter, casc) {
 	console.log(`[headless] Merged ${attachments.length} attachments for head model.`);
 }
 
-// --- Main stateless export function ---
-/**
- * Export a character model headlessly/statelessly.
- * @param {Object} params - { race, gender, customizations, geosetIds }
- * @returns {Promise<{outPath: string, fileManifest: Array<string>}>} - Path to exported file and fileManifest
- */
-async function exportCharacterModelHeadless({ race, gender, customizations, geosetIds }) {
+const m2ExporterCache = new Map();
+
+async function exportCharacterModelHeadless({ race, gender, customizations, geosetIds, excludeAnimationIds = [] }) {
 	try {
 		await CharMaterialRenderer.init(); // Ensure shaders are loaded and compiled
 		console.log('[headless] Starting export for', { race, gender, customizations, geosetIds });
@@ -292,16 +288,22 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 		const casc = core.view.casc;
 		if (!casc) throw new Error('CASC not loaded');
 		console.log('[headless] Loading model file for fileDataID', fileDataID);
-		const file = await casc.getFile(fileDataID);
-		const exporter = new M2Exporter(file, [], fileDataID);
-		await exporter.m2.load();
-		await exporter.m2.getSkin(0);
+
+		let exporter = m2ExporterCache.get(fileDataID);
+		if (!exporter) {
+			const file = await casc.getFile(fileDataID);
+			exporter = new M2Exporter(file, [], fileDataID);
+			m2ExporterCache.set(fileDataID, exporter);
+			await exporter.m2.load();
+			await exporter.m2.getSkin(0);
+			await mergeMainModelAttachmentsIfHead(fileDataID, exporter, casc);
+		}
+		exporter.setExcludedAnimIds(excludeAnimationIds);
+
 		// 3. Merge attachments for head models
-		await mergeMainModelAttachmentsIfHead(fileDataID, exporter, casc);
 		// 4. Build geoset mask (UI logic, aligned by submeshID)
 		const skin = exporter.m2.skins?.[0];
 		const subMeshes = skin?.subMeshes || [];
-		console.log('[headless] Loaded subMeshes:', subMeshes.map(sm => sm.submeshID));
 		const enabledGeosetIds = new Set();
 		for (const [, choiceID] of Object.entries(customizations || {})) {
 			const chrCustGeoID = lookups.choiceToGeoset.get(Number(choiceID));
@@ -340,12 +342,7 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 				}
 			}
 		}
-		console.log('[headless] Final geosetMask:', geosetMask);
-		const enabledCount = geosetMask.filter(g => g.checked).length;
-		console.log('[headless] Enabled submeshes in geosetMask:', enabledCount);
-		if (enabledCount === 0) 
-			console.warn('[headless] WARNING: No submeshes enabled in geosetMask. Export will be empty.');
-		
+	
 		exporter.setGeosetMask(geosetMask);
 		// 5. Prepare materials (stateless, using CharMaterialRenderer)
 		const chrMaterials = new Map();
@@ -390,7 +387,7 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 				}
 			}
 		}
-		console.log('[headless] Prepared materials:', Array.from(chrMaterials.keys()));
+		exporter.resetURITextures();
 		for (const [chrModelTextureTarget, chrMaterial] of chrMaterials) {
 			let originalFilename = null;
 			if (chrMaterial.textureTargets && chrMaterial.textureTargets.length > 0) {
@@ -399,23 +396,19 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 			}
 			exporter.addURITexture(chrModelTextureTarget, chrMaterial.getURI(), originalFilename);
 		}
-		console.log('[headless] subMeshes:', subMeshes);
-		console.log('[headless] geosetMask:', geosetMask);
 		// 6. Export
 		const helper = new ExportHelper(1, 'model');
 		helper.start();
 		const fileName = listfile.getByID(fileDataID);
 		const exportPath = ExportHelper.replaceExtension(ExportHelper.getExportPath(fileName), '.obj');
 		
-		console.log('[headless] About to export as OBJ to', exportPath);
 		const fileManifest = [];
-		const exportResult = await exporter.exportAsOBJ(exportPath, false, helper, fileManifest);
-		console.log('[headless] exportAsOBJ result:', exportResult);
+		await exporter.exportAsOBJ(exportPath, false, helper, fileManifest);
+		helper.mark(fileName, true);
 		helper.finish();
-		console.log('[headless] Export complete:', exportPath, 'Helper:', helper);
 		return { exportPath, fileName, fileManifest };
 	} catch (err) {
-		console.log('[headless] Export failed:', err);
+		console.log('Export failed:', err);
 		throw err;
 	}
 }

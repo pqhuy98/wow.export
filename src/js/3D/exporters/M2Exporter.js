@@ -32,6 +32,11 @@ class M2Exporter {
 		this.fileDataID = fileDataID;
 		this.variantTextures = variantTextures;
 		this.dataTextures = new Map();
+		this.excludedAnimIds = new Set();
+	}
+
+	setExcludedAnimIds(excludedAnimIds) {
+		this.excludedAnimIds = new Set(excludedAnimIds);
 	}
 
 	/**
@@ -47,6 +52,10 @@ class M2Exporter {
 	 */
 	async addURITexture(out, dataURI, filename = null) {
 		this.dataTextures.set(out, { dataURI, filename });
+	}
+
+	resetURITextures() {
+		this.dataTextures.clear();
 	}
 
 	/**
@@ -422,17 +431,24 @@ class M2Exporter {
 			const json = new JSONWriter(ExportHelper.replaceExtension(out, '_bones.json'));
 
 			if (this.m2.skeletonFileID) {
-				const skel_file = await core.view.casc.getFile(this.m2.skeletonFileID);
-				const skel = new SKELLoader(skel_file);
-	
-				await skel.load();
-				await skel.loadAnims();
+				if (!this.skel) {
+					const skel_file = await core.view.casc.getFile(this.m2.skeletonFileID);
+					this.skel = new SKELLoader(skel_file);
+					await this.skel.load();
+					await this.skel.loadAnims();
+				}
+
+				const skel = this.skel;
 	
 				if (skel.parent_skel_file_id > 0) {
-					const parent_skel_file = await core.view.casc.getFile(skel.parent_skel_file_id);
-					const parent_skel = new SKELLoader(parent_skel_file);
-					await parent_skel.load();
-					await parent_skel.loadAnims();
+					if (!this.parent_skel) {
+						const parent_skel_file = await core.view.casc.getFile(this.skel.parent_skel_file_id);
+						this.parent_skel = new SKELLoader(parent_skel_file);
+						await this.parent_skel.load();
+						await this.parent_skel.loadAnims();
+					}
+
+					const parent_skel = this.parent_skel;
 
 					// This section is similar to M2Exporter.exportAsGLTF
 					// Map of animation indices from child to parent.
@@ -477,18 +493,18 @@ class M2Exporter {
 							}
 						}
 					}
-	
-					json.addProperty('bones', parent_skel.bones);
+ 
+					json.addProperty('bones', bonesExcludeAnimations(parent_skel, this.excludedAnimIds));
 					if (parent_skel.animations)
 						json.addProperty('animations', parent_skel.animations);
 				} else {
-					json.addProperty('bones', skel.bones);
+					json.addProperty('bones', bonesExcludeAnimations(skel, this.excludedAnimIds));
 					if (skel.animations)
 						json.addProperty('animations', skel.animations);
 				}
 	
 			} else {
-				json.addProperty('bones', this.m2.bones);
+				json.addProperty('bones', bonesExcludeAnimations(this.m2, this.excludedAnimIds));
 				await this.m2.loadAnims();
 				json.addProperty('animations', this.m2.animations);
 			}
@@ -505,7 +521,7 @@ class M2Exporter {
 				json.addProperty('attachments', []);
 			
 
-			await json.write(config.overwriteFiles);
+			await json.write(config.overwriteFiles, true);
 		}
 
 		if (exportMeta) {
@@ -879,6 +895,52 @@ class M2Exporter {
 
 		await manifest.write();
 	}
+}
+
+function bonesExcludeAnimations(skel, excludedAnimIds) {
+	// Fast-path: nothing to exclude
+	if (!excludedAnimIds || excludedAnimIds.size === 0)
+		return skel.bones;
+
+	const animations = skel.animations;
+	// Map animID -> index into timestamp/value arrays
+	const animIdxMap = new Map(animations.map((anim, idx) => [anim.id, idx]));
+
+	// Pre-compute the indices we actually need to strip out and turn into a Set for O(1) look-ups
+	const excludedIndices = new Set(
+		[...excludedAnimIds]
+			.map(id => animIdxMap.get(id))
+			.filter(idx => idx !== undefined)
+	);
+
+	// If none of the requested IDs exist on this skeleton, bail early
+	if (excludedIndices.size === 0)
+		return skel.bones;
+
+	const modifyArr = (arr) => arr.map((a, idx) => excludedIndices.has(idx) ? [] : a);
+
+	const start = performance.now();
+	const newBones = skel.bones.map(bone => ({
+		...bone,
+		translation: {
+			...bone.translation,
+			timestamps: modifyArr(bone.translation.timestamps),
+			values: modifyArr(bone.translation.values),
+		},
+		rotation: {
+			...bone.rotation,
+			timestamps: modifyArr(bone.rotation.timestamps),
+			values: modifyArr(bone.rotation.values),
+		},
+		scale: {
+			...bone.scale,
+			timestamps: modifyArr(bone.scale.timestamps),
+			values: modifyArr(bone.scale.values),
+		},
+	}));
+
+	console.log('Bones exclude animations took', performance.now() - start, 'ms');
+	return newBones;
 }
 
 module.exports = M2Exporter;

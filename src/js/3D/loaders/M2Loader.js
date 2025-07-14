@@ -28,6 +28,7 @@ class M2Loader {
 	constructor(data) {
 		this.data = data;
 		this.isLoaded = false;
+		this.isAnimLoaded = false;
 		this.animFiles = new Map();
 	}
 
@@ -85,6 +86,8 @@ class M2Loader {
 	 * Load and apply .anim files to loaded M2 model.
 	 */
 	async loadAnims() {
+		if (this.isAnimLoaded)
+			return;
 		for (let i = 0; i < this.animations.length; i++) {
 			let animation = this.animations[i];
 
@@ -135,6 +138,7 @@ class M2Loader {
 		this.data.seek(this.md21Ofs + 44);
 
 		this.parseChunk_MD21_bones(this.md21Ofs, true);
+		this.isAnimLoaded = true;
 	}
 
 	/**
