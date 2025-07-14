@@ -30,18 +30,29 @@ class JSONWriter {
 	 * Write the JSON to disk.
 	 * @param {boolean} overwrite
 	 */
-	async write(overwrite = true) {
+	async write(overwrite = true, minify = false) {
+		const start = performance.now();
 		// If overwriting is disabled, check file existence.
 		if (!overwrite && await generics.fileExists(this.out))
 			return;
 
 		await generics.createDirectory(path.dirname(this.out));
 		const writer = new FileWriter(this.out);
-		await writer.writeLine(JSON.stringify(this.data, (key, value) => {
-			// Handle serialization of BigInt, as JS will not handle it as per spec (TC39)
-			return typeof value === 'bigint' ? value.toString() : value
-		}, '\t'));
+
+		// Try the fastest stringify path first (no replacer). If the payload contains
+		// BigInt values Node will throw – fall back to a replacer only in that case.
+		let jsonStr;
+		try {
+			jsonStr = JSON.stringify(this.data, null, minify ? null : '\t');
+		} catch (err) {
+			if (err && /BigInt/.test(err.message)) 
+				jsonStr = JSON.stringify(this.data, (key, value) => typeof value === 'bigint' ? value.toString() : value, minify ? null : '\t');
+			else throw err;			
+		}
+
+		await writer.writeLine(jsonStr);
 		writer.close();
+		console.log('JSONWriter write', this.out, 'took', performance.now() - start, 'ms');
 	}
 }
 
