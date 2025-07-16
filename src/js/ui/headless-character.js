@@ -260,7 +260,32 @@ async function mergeMainModelAttachmentsIfHead(fileDataID, exporter, casc) {
 	console.log(`[headless] Merged ${attachments.length} attachments for head model.`);
 }
 
+// LRU cache for already-parsed M2 models. Keeps memory bounded.
+// We use a Map that is touched on every get() so iteration order reflects recency.
+// When the size exceeds MAX_CACHE the oldest (first) entry is evicted.
+const MAX_CACHE = 10;
 const m2ExporterCache = new Map();
+
+function getCachedExporter(fileDataID) {
+	if (m2ExporterCache.has(fileDataID)) {
+		// Touch: move to the end (most-recent)
+		const value = m2ExporterCache.get(fileDataID);
+		m2ExporterCache.delete(fileDataID);
+		m2ExporterCache.set(fileDataID, value);
+		return value;
+	}
+	return null;
+}
+
+function addExporterToCache(fileDataID, exporter) {
+	if (m2ExporterCache.has(fileDataID)) m2ExporterCache.delete(fileDataID);
+	m2ExporterCache.set(fileDataID, exporter);
+	// Evict oldest if over limit
+	if (m2ExporterCache.size > MAX_CACHE) {
+		const oldestKey = m2ExporterCache.keys().next().value;
+		m2ExporterCache.delete(oldestKey);
+	}
+}
 
 async function exportCharacterModelHeadless({ race, gender, customizations, geosetIds, excludeAnimationIds = [] }) {
 	try {
@@ -289,11 +314,11 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 		if (!casc) throw new Error('CASC not loaded');
 		console.log('[headless] Loading model file for fileDataID', fileDataID);
 
-		let exporter = m2ExporterCache.get(fileDataID);
+		let exporter = getCachedExporter(fileDataID);
 		if (!exporter) {
 			const file = await casc.getFile(fileDataID);
 			exporter = new M2Exporter(file, [], fileDataID);
-			m2ExporterCache.set(fileDataID, exporter);
+			addExporterToCache(fileDataID, exporter);
 			await exporter.m2.load();
 			await exporter.m2.getSkin(0);
 			await mergeMainModelAttachmentsIfHead(fileDataID, exporter, casc);
@@ -406,6 +431,8 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 		await exporter.exportAsOBJ(exportPath, false, helper, fileManifest);
 		helper.mark(fileName, true);
 		helper.finish();
+		for (const [, chrMaterial] of chrMaterials)
+			chrMaterial.dispose();
 		return { exportPath, fileName, fileManifest };
 	} catch (err) {
 		console.log('Export failed:', err);
