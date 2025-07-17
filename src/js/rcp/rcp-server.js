@@ -396,7 +396,7 @@ class RCPServer {
 			return;
 
 		const id = exportID++;
-		client.sendData('EXPORT_START', { exportID: id });
+		client.sendData('EXPORT_START', { exportID: id, requestId: data.requestId });
 
 		const files = Array.isArray(data.fileDataID) ? data.fileDataID : [data.fileDataID];
 		core.events.emit(exportEvent, files, id);
@@ -429,7 +429,7 @@ class RCPServer {
 		}
 
 		const id = exportID++;
-		client.sendData('EXPORT_START', { exportID: id });
+		client.sendData('EXPORT_START', { exportID: id, requestId: data.requestId });
 
 		core.events.emit('rcp-export-models', models, id);
 	}
@@ -464,7 +464,7 @@ class RCPServer {
 			return;
 
 		const id = exportID++;
-		client.sendData('EXPORT_START', { exportID: id });
+		client.sendData('EXPORT_START', { exportID: id, requestId: data.requestId });
 
 		// Emit the character export event
 		core.events.emit('rcp-export-character', data, id);
