@@ -917,25 +917,27 @@ function bonesExcludeAnimations(skel, excludedAnimIds) {
 	if (excludedIndices.size === 0)
 		return skel.bones;
 
-	const modifyArr = (arr) => arr.map((a, idx) => excludedIndices.has(idx) ? [] : a);
+	// If the bone belongs to some global sequence, we can't remove the timestamps/values
+	const noGlobalSeq = 65535;
+	const modifyArr = (arr, globalSeq) => arr.map((a, idx) => globalSeq === noGlobalSeq && excludedIndices.has(idx) ? [] : a);
 
 	const start = performance.now();
 	const newBones = skel.bones.map(bone => ({
 		...bone,
 		translation: {
 			...bone.translation,
-			timestamps: modifyArr(bone.translation.timestamps),
-			values: modifyArr(bone.translation.values),
+			timestamps: modifyArr(bone.translation.timestamps, bone.translation.globalSeq),
+			values: modifyArr(bone.translation.values, bone.translation.globalSeq),
 		},
 		rotation: {
 			...bone.rotation,
-			timestamps: modifyArr(bone.rotation.timestamps),
-			values: modifyArr(bone.rotation.values),
+			timestamps: modifyArr(bone.rotation.timestamps, bone.rotation.globalSeq),
+			values: modifyArr(bone.rotation.values, bone.rotation.globalSeq),
 		},
 		scale: {
 			...bone.scale,
-			timestamps: modifyArr(bone.scale.timestamps),
-			values: modifyArr(bone.scale.values),
+			timestamps: modifyArr(bone.scale.timestamps, bone.scale.globalSeq),
+			values: modifyArr(bone.scale.values, bone.scale.globalSeq),
 		},
 	}));
 
