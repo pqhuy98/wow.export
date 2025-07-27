@@ -19,10 +19,6 @@ async function getLookups() {
 	const chrRaceXChrModelMap = new Map();
 	const chrModelIDToFileDataID = new Map();
 	const chrModelIDToTextureLayoutID = new Map();
-	const optionsByChrModel = new Map();
-	const optionToChoices = new Map();
-	const defaultOptions = [];
-	const chrRaceMap = new Map();
 	const choiceToGeoset = new Map();
 	const choiceToChrCustMaterialID = new Map();
 	const choiceToSkinnedModel = new Map();
@@ -136,10 +132,6 @@ async function getLookups() {
 		chrRaceXChrModelMap,
 		chrModelIDToFileDataID,
 		chrModelIDToTextureLayoutID,
-		optionsByChrModel,
-		optionToChoices,
-		defaultOptions,
-		chrRaceMap,
 		choiceToGeoset,
 		choiceToChrCustMaterialID,
 		choiceToSkinnedModel,
