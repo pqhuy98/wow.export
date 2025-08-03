@@ -46,7 +46,7 @@
 	"modelsShowM2": true,
 	"modelsShowM3": true,
 	"modelsShowWMO": true,
-	"listfileShowFileDataIDs": false,
+	"listfileShowFileDataIDs": true,
 	"modelsAutoPreview": true,
 	"modelViewerShowGrid": true,
 	"modelViewerWireframe": false,
