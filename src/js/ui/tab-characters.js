@@ -936,12 +936,7 @@ core.registerLoadFunc(async () => {
 			console.log('[RPC] Calling exportCharacterModelHeadless...');
 			const result = await headlessExport.exportCharacterModelHeadless({
 				casc: core.view.casc,
-				race: parseInt(race),
-				gender: parseInt(gender),
-				customizations,
-				geosetIds,
-				exportPath,
-				excludeAnimationIds,
+				...data,
 			});
 			console.log('[RPC] Export succeeded, dispatching HOOK_EXPORT_COMPLETE', { exportID, result });
 			core.rcp.dispatchHook('HOOK_EXPORT_COMPLETE', {

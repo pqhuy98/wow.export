@@ -279,10 +279,10 @@ function addExporterToCache(fileDataID, exporter) {
 	}
 }
 
-async function exportCharacterModelHeadless({ race, gender, customizations, geosetIds, excludeAnimationIds = [] }) {
+async function exportCharacterModelHeadless({ race, gender, customizations, geosetIds, hideGeosetIds, excludeAnimationIds = [] }) {
 	try {
 		await CharMaterialRenderer.init(); // Ensure shaders are loaded and compiled
-		console.log('[headless] Starting export for', { race, gender, customizations, geosetIds });
+		console.log('[headless] Starting export for', { race, gender, customizations, geosetIds, hideGeosetIds });
 		const lookups = await getLookups();
 		// 1. Find model for race/gender
 		const modelMap = lookups.chrRaceXChrModelMap.get(race);
@@ -348,18 +348,24 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 			const idsToEnable = new Set(geosetIds);
 			const groupsToOverride = new Set(geosetIds.map(id => geosetGroup(id)));
 
-			for (let i = 0; i < geosetMask.length; i++) {
-				const subMesh = subMeshes[i];
-				if (!subMesh) continue;
-
-				const group = geosetGroup(subMesh.submeshID);
+			for (const geoset of geosetMask) {
+				const group = geosetGroup(geoset.id);
 				if (groupsToOverride.has(group)) {
 					// Within overridden groups, enable only the explicitly requested IDs
-					geosetMask[i].checked = idsToEnable.has(subMesh.submeshID);
+					geoset.checked = idsToEnable.has(geoset.id);
 				}
 			}
 		}
-	
+
+		if (Array.isArray(hideGeosetIds) && hideGeosetIds.length > 0) {
+			const idsToHide = new Set(hideGeosetIds);
+			for (const geoset of geosetMask) {
+				if (idsToHide.has(geoset.id)) {
+					geoset.checked = false;
+				}
+			}
+		}
+
 		exporter.setGeosetMask(geosetMask);
 		// 5. Prepare materials (stateless, using CharMaterialRenderer)
 		const chrMaterials = new Map();
