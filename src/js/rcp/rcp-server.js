@@ -458,6 +458,7 @@ class RCPServer {
 			gender: 'number',
 			customizations: 'object',
 			geosetIds: "object",
+			hideGeosetIds: "object",
 			include_animations: 'boolean',
 			include_base_clothing: 'boolean'
 		}))
