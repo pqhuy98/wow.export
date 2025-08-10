@@ -224,10 +224,8 @@ class CASCLocal extends CASC {
 	 * Load and parse root table from local installation.
 	 */
 	async loadRoot() {
-		// Get root key from encoding table.
-		const rootKey = this.encodingKeys.get(this.buildConfig.root);
-		if (rootKey === undefined)
-			throw new Error('No encoding entry found for root key');
+		// Resolve root key via lazy lookup.
+		const rootKey = this.getEncodingKeyForContentKey(this.buildConfig.root);
 
 		// Parse root file.
 		log.timeLog();

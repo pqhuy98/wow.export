@@ -13,6 +13,7 @@ const config = require('../config');
 
 const CASCLocal = require('../casc/casc-source-local');
 const CASCRemote = require('../casc/casc-source-remote');
+const cacheManager = require('../cache-manager');
 
 let exportID = 0;
 
@@ -303,7 +304,18 @@ class RCPServer {
 		core.view.showLoadScreen();
 
 		try {
+			// Use a stable build identifier for caching. Both CASCLocal and CASCRemote
+			// expose getBuildKey() which returns a unique key for the selected build
+			// (BuildKey for local installs, BuildConfig for remote/CDN installs).
+			const buildMeta = casc.builds[data.buildIndex] || {};
+			const buildKey = buildMeta.BuildKey || buildMeta.BuildConfig || buildMeta.Version || String(data.buildIndex);
+			log.write('cacheManager.init with buildKey', buildKey);
+			await cacheManager.init(buildKey, casc);
+			log.write('cacheManager.init done');
+
+			log.write('loading casc', casc.load);
 			await casc.load(data.buildIndex);
+			log.write('casc.load done');
 			core.view.setScreen('tab-models');
 		} catch (e) {
 			log.write('Failed to load CASC: %o', e);

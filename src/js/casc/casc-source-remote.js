@@ -227,10 +227,8 @@ class CASCRemote extends CASC {
 	 * Download and parse the root file.
 	 */
 	async loadRoot() {
-		// Get root key from encoding table.
-		const rootKey = this.encodingKeys.get(this.buildConfig.root);
-		if (rootKey === undefined)
-			throw new Error('No encoding entry found for root key');
+		// Resolve root key via lazy lookup.
+		const rootKey = this.getEncodingKeyForContentKey(this.buildConfig.root);
 
 		log.timeLog();
 		await this.progress.step('Loading root table');

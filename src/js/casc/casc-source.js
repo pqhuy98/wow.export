@@ -116,13 +116,110 @@ class CASC {
 	 * @returns {string}
 	 */
 	getEncodingKeyForContentKey(contentKey) {
-		const encodingKey = this.encodingKeys.get(contentKey);
-		if (encodingKey === undefined)
-			throw new Error('No encoding entry found: ' + contentKey);
+		// Fast-path: already cached.
+		let encodingKey = this.encodingKeys.get(contentKey);
+		if (encodingKey !== undefined)
+			return encodingKey;
 
-		// This underlying implementation returns the encoding key rather than a
-		// data file, allowing CASCLocal and CASCRemote to implement readers.
-		return encodingKey;
+		// Lazy path: we need to parse pages until the key is found.
+		if (!this._encodingRaw || !this._encodingMeta)
+			throw new Error('Encoding table not loaded');
+
+		const {
+			hashSizeCKey,
+			hashSizeEKey,
+			cKeyPageSize,
+			cKeyPageCount,
+			pagesStart
+		} = this._encodingMeta;
+
+		const enc = this._encodingRaw;
+		this._encodingPagesParsed = this._encodingPagesParsed || new Set();
+
+		for (let page = 0; page < cKeyPageCount; page++) {
+			if (this._encodingPagesParsed.has(page))
+				continue;
+
+			const pageStart = pagesStart + (cKeyPageSize * page);
+			enc.seek(pageStart);
+
+			while (enc.offset < pageStart + cKeyPageSize) {
+				const keysCount = enc.readUInt8();
+				if (keysCount === 0)
+					break;
+
+				const size = enc.readInt40BE();
+				const cKey = enc.readHexString(hashSizeCKey);
+				const eKey = enc.readHexString(hashSizeEKey);
+
+				// Populate caches for future look-ups.
+				this.encodingSizes.set(cKey, size);
+				this.encodingKeys.set(cKey, eKey);
+
+				enc.move(hashSizeEKey * (keysCount - 1));
+			}
+
+			this._encodingPagesParsed.add(page);
+
+			encodingKey = this.encodingKeys.get(contentKey);
+			if (encodingKey !== undefined)
+				return encodingKey;
+		}
+
+		// As a last resort, parse the entire table once (slow path). This should
+		// happen very rarely and still avoids the cold-start cost.
+		if (!this._encodingFullyParsed) {
+			this._parseEncodingFileFull();
+			encodingKey = this.encodingKeys.get(contentKey);
+			if (encodingKey !== undefined)
+				return encodingKey;
+		}
+
+		throw new Error('No encoding entry found: ' + contentKey);
+	}
+
+	/**
+	 * Slow-path: parse the entire encoding file and fill the maps. Mirrors the
+	 * original implementation, used only when a key is genuinely missing after
+	 * lazy loading.
+	 */
+	_parseEncodingFileFull() {
+		if (this._encodingFullyParsed)
+			return;
+
+		if (!this._encodingRaw || !this._encodingMeta)
+			throw new Error('Encoding table not loaded');
+
+		const encoding = new BLTEReader(BufferWrapper.from(this._encodingRaw.raw), '');
+
+		const {
+			hashSizeCKey,
+			hashSizeEKey,
+			cKeyPageSize,
+			cKeyPageCount,
+			pagesStart
+		} = this._encodingMeta;
+
+		for (let page = 0; page < cKeyPageCount; page++) {
+			const pageStart = pagesStart + (cKeyPageSize * page);
+			encoding.seek(pageStart);
+
+			// Replicate historical parser behaviour (see original code).
+			while (encoding.offset < (pageStart + pagesStart)) {
+				const keysCount = encoding.readUInt8();
+				if (keysCount === 0)
+					break;
+
+				const size = encoding.readInt40BE();
+				const cKey = encoding.readHexString(hashSizeCKey);
+				this.encodingSizes.set(cKey, size);
+				this.encodingKeys.set(cKey, encoding.readHexString(hashSizeEKey));
+
+				encoding.move(hashSizeEKey * (keysCount - 1));
+			}
+		}
+
+		this._encodingFullyParsed = true;
 	}
 
 	/**
@@ -388,14 +485,16 @@ class CASC {
 	}
 	
 	/**
-	 * Parse entries from an encoding file.
-	 * @param {BufferWrapper} data 
-	 * @param {string} hash 
-	 * @returns {object}
+	 * Parse entries from an encoding file (lazy variant).
+	 * Instead of materialising ~2.5 M entries upfront we only read the header
+	 * and remember where each page starts. The actual key/value pairs are
+	 * decoded on-demand in getEncodingKeyForContentKey().
 	 */
 	async parseEncodingFile(data, hash) {
-		const encodingSizes = this.encodingSizes;
-		const encodingKeys = this.encodingKeys;
+		// Reset lazy state.
+		this._encodingPagesParsed = new Set();
+		this.encodingKeys  = this.encodingKeys  || new Map();
+		this.encodingSizes = this.encodingSizes || new Map();
 
 		const encoding = new BLTEReader(data, hash);
 
@@ -412,27 +511,19 @@ class CASC {
 		encoding.move(4 + 1); // eKeyPageCount + unk11
 		const specBlockSize = encoding.readInt32BE();
 
+		// Skip to first page and remember where page data begins.
 		encoding.move(specBlockSize + (cKeyPageCount * (hashSizeCKey + 16)));
-
 		const pagesStart = encoding.offset;
-		for (let i = 0; i < cKeyPageCount; i++) {
-			const pageStart = pagesStart + (cKeyPageSize * i);
-			encoding.seek(pageStart);
 
-			while (encoding.offset < (pageStart + pagesStart)) {
-				const keysCount = encoding.readUInt8();
-				if (keysCount === 0)
-					break;
-
-				const size = encoding.readInt40BE();
-				const cKey = encoding.readHexString(hashSizeCKey);
-
-				encodingSizes.set(cKey, size);
-				encodingKeys.set(cKey, encoding.readHexString(hashSizeEKey));
-
-				encoding.move(hashSizeEKey * (keysCount - 1));
-			}
-		}
+		// Persist raw buffer + meta for lazy look-ups.
+		this._encodingRaw  = encoding;
+		this._encodingMeta = {
+			hashSizeCKey,
+			hashSizeEKey,
+			cKeyPageSize,
+			cKeyPageCount,
+			pagesStart
+		};
 	}
 
 	/**
