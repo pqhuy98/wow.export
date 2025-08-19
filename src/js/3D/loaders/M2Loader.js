@@ -236,13 +236,13 @@ class M2Loader {
 		this.parseChunk_MD21_textureTransformLookup(ofs);
 		this.parseChunk_MD21_collision(ofs);
 		this.parseChunk_MD21_attachments(ofs);
-		// this.data.move(8); // attachmentIndicesByID / attachment_lookup_table
-		// this.data.move(8); // events
-		// this.data.move(8); // lights
-		// this.data.move(8); // cameras
-		// this.data.move(8); // camera_lookup_table
-		// this.data.move(8); // ribbon_emitters
-		// this.data.move(8); // particle_emitters
+		this.data.move(8); // attachmentIndicesByID / attachment_lookup_table
+		this.data.move(8); // events
+		this.data.move(8); // lights
+		this.data.move(8); // cameras
+		this.data.move(8); // camera_lookup_table
+		this.data.move(8); // this.parseChunk_MD21_ribbon_emitters(ofs);
+		this.parseChunk_MD21_particle_emitters(ofs);
 		
 		// // if 0x8 is set, textureCombinerCombos
 		// if (this.flags & 0x8)
@@ -424,6 +424,230 @@ class M2Loader {
 
 			this.data.seek(base);
 		}
+	}
+
+	parseChunk_MD21_ribbon_emitters(ofs) {
+		const ribbonEmitterCount = this.data.readUInt32LE();
+		const ribbonEmitterOfs = this.data.readUInt32LE();
+		console.log('ribbonEmitterCount', ribbonEmitterCount);
+		console.log('ribbonEmitterOfs', ribbonEmitterOfs);
+		// https://wowdev.wiki/M2#Ribbon_emitters
+		if (ribbonEmitterCount > 0 && ribbonEmitterOfs > 0) {
+			const base = this.data.offset;
+			this.data.seek(ribbonEmitterOfs + ofs);
+
+			this.ribbonEmitters = new Array(ribbonEmitterCount);
+			for (let i = 0; i < ribbonEmitterCount; i++) {
+				this.ribbonEmitters[i] = {
+					ribbonId: this.data.readUInt32LE(),
+					boneIndex: this.data.readUInt32LE(), // Fixed: should be uint32, not uint16
+					position: this.data.readFloatLE(3),
+					textureIndices: this.data.readUInt16LE(this.data.readUInt32LE()),
+					materialIndices: this.data.readUInt16LE(this.data.readUInt32LE()),
+					colorTrack: M2Generics.read_m2_track(this.data, this.md21Ofs, "float3"),
+					alphaTrack: M2Generics.read_m2_track(this.data, this.md21Ofs, "int16"),
+					heightAboveTrack: M2Generics.read_m2_track(this.data, this.md21Ofs, "float"),
+					heightBelowTrack: M2Generics.read_m2_track(this.data, this.md21Ofs, "float"),
+					edgesPerSecond: this.data.readFloatLE(),
+					edgeLifetime: this.data.readFloatLE(),
+					gravity: this.data.readFloatLE(),
+					textureRows: this.data.readUInt16LE(),
+					textureCols: this.data.readUInt16LE(),
+					texSlotTrack: M2Generics.read_m2_track(this.data, this.md21Ofs, "uint16"),
+					visibilityTrack: M2Generics.read_m2_track(this.data, this.md21Ofs, "uint8"),
+					priorityPlane: this.data.readInt16LE(),
+					ribbonColorIndex: this.data.readInt8LE(),
+					textureTransformLookupIndex: this.data.readInt8LE(),
+				};
+			}
+			this.data.seek(base);
+		}
+	}
+
+	parseChunk_MD21_particle_emitters(ofs) {
+		console.log("parseChunk_MD21_particle_emitters", ofs);
+		const count = this.data.readUInt32LE();
+		const tableOfs = this.data.readUInt32LE();
+		if (count === 0 || tableOfs === 0) return;
+
+		const base = this.data.offset;
+		console.log("seek particle emitters", tableOfs);
+		this.data.seek(tableOfs + ofs);
+		console.log("seeked particle emitters", tableOfs + ofs);
+
+		this.particleEmitters = new Array(count);
+		for (let i = 0; i < count; i++) {
+			// Read fixed part of M2ParticleOld
+			const particleId = this.data.readUInt32LE();
+			const flags = this.data.readUInt32LE();
+			const position = this.data.readFloatLE(3);
+			const bone = this.data.readUInt16LE();
+			// Packed texture field (uint16) in early versions; treat as a single texture index for metadata
+			const texturePacked = this.data.readUInt16LE();
+			const geometryModelNameLen = this.data.readUInt32LE();
+			const geometryModelNameOfs = this.data.readUInt32LE();
+			const recursionModelNameLen = this.data.readUInt32LE();
+			const recursionModelNameOfs = this.data.readUInt32LE();
+			const blendingType = this.data.readUInt8();
+			const emitterType = this.data.readUInt8();
+			const particleColorIndex = this.data.readUInt16LE();
+			// multiTextureParamX[2]
+			const multiTextureParamX0 = this.data.readUInt8();
+			const multiTextureParamX1 = this.data.readUInt8();
+			const textureTileRotation = this.data.readUInt16LE();
+			const rows = this.data.readUInt16LE();
+			const cols = this.data.readUInt16LE();
+
+			// Tracks
+			const emissionSpeed = M2Generics.read_m2_track(this.data, ofs, 'float');
+			const speedVariation = M2Generics.read_m2_track(this.data, ofs, 'float');
+			const verticalRange = M2Generics.read_m2_track(this.data, ofs, 'float');
+			const horizontalRange = M2Generics.read_m2_track(this.data, ofs, 'float');
+			// gravity track may be either float or compressed; read as float to keep simple in metadata
+			const gravity = M2Generics.read_m2_track(this.data, ofs, 'uint32'); // read as uint32 because it's not float in some cases, but a compressed vector3
+			const lifespan = M2Generics.read_m2_track(this.data, ofs, 'float');
+			const lifespanVary = this.data.readFloatLE();
+			const emissionRate = M2Generics.read_m2_track(this.data, ofs, 'float');
+			const emissionRateVary = this.data.readFloatLE();
+			const emissionAreaLength = M2Generics.read_m2_track(this.data, ofs, 'float');
+			const emissionAreaWidth = M2Generics.read_m2_track(this.data, ofs, 'float');
+			const zSource = M2Generics.read_m2_track(this.data, ofs, 'float');
+
+			// Part tracks (age-based): color (float3), alpha (int16 fixed), scale (float2), head/tail (uint16)
+			const colorTrack = M2Generics.read_m2_part_track(this.data, ofs, 'float3');
+			const alphaTrack = M2Generics.read_m2_part_track(this.data, ofs, 'int16');
+			const scaleTrack = M2Generics.read_m2_part_track(this.data, ofs, 'float2');
+			const scaleVaryX = this.data.readFloatLE();
+			const scaleVaryY = this.data.readFloatLE();
+			const headCellTrack = M2Generics.read_m2_part_track(this.data, ofs, 'uint16');
+			const tailCellTrack = M2Generics.read_m2_part_track(this.data, ofs, 'uint16');
+			const tailLength = this.data.readFloatLE();
+			const twinkleSpeed = this.data.readFloatLE();
+			const twinklePercent = this.data.readFloatLE();
+			// twinkleScale (range)
+			const twinkleScaleMin = this.data.readFloatLE();
+			const twinkleScaleMax = this.data.readFloatLE();
+			const burstMultiplier = this.data.readFloatLE();
+			const drag = this.data.readFloatLE();
+			const baseSpin = this.data.readFloatLE();
+			const baseSpinVary = this.data.readFloatLE();
+			const spin = this.data.readFloatLE();
+			const spinVary = this.data.readFloatLE();
+			// tumble M2Box: two C3Vectors (min/max) → 6 floats
+			const tumble = this.data.readFloatLE(6);
+			const windVector = this.data.readFloatLE(3);
+			const windTime = this.data.readFloatLE();
+			const followSpeed1 = this.data.readFloatLE();
+			const followScale1 = this.data.readFloatLE();
+			const followSpeed2 = this.data.readFloatLE();
+			const followScale2 = this.data.readFloatLE();
+
+			// spline points (array of C3Vector)
+			const splinePointsCount = this.data.readUInt32LE();
+			const splinePointsOfs = this.data.readUInt32LE();
+			let splinePoints = [];
+			if (splinePointsCount > 0 && splinePointsOfs > 0) {
+				const spBase = this.data.offset;
+				// this.data.seek(ofs + splinePointsOfs);
+				// splinePoints = new Array(splinePointsCount);
+				// for (let s = 0; s < splinePointsCount; s++) splinePoints[s] = this.data.readFloatLE(3);
+				// this.data.seek(spBase);
+			}
+
+			// enabledIn M2Track<uint8> (bool), use as visibility hint
+			const enabledIn = M2Generics.read_m2_track(this.data, ofs, 'uint8');
+
+			// Cata+: two arrays appended after old: multiTextureParam0[2], multiTextureParam1[2]
+			const read_fp69_vec2 = () => {
+				const x = this.data.readUInt16LE();
+				const y = this.data.readUInt16LE();
+				// fp_6_9 approx: divide by 2^9
+				return [x / 512.0, y / 512.0];
+			};
+			let multiTextureParam0 = null;
+			let multiTextureParam1 = null;
+			try {
+				multiTextureParam0 = [read_fp69_vec2(), read_fp69_vec2()];
+				multiTextureParam1 = [read_fp69_vec2(), read_fp69_vec2()];
+			} catch (e) {
+				// Older clients may not have these fields; ignore if reading fails
+			}
+
+			// Resolve names
+			let geometryModel = '';
+			let recursionModel = '';
+			// const pos = this.data.offset;
+			// if (geometryModelNameLen > 0 && geometryModelNameOfs > 0) {
+			// 	this.data.seek(geometryModelNameOfs);
+			// 	geometryModel = this.data.readString(geometryModelNameLen);
+			// }
+			// if (recursionModelNameLen > 0 && recursionModelNameOfs > 0) {
+			// 	this.data.seek(recursionModelNameOfs);
+			// 	recursionModel = this.data.readString(recursionModelNameLen);
+			// }
+			// this.data.seek(pos);
+
+			// Coordinate conversion for position (match attachments/bones conversion): x=x, y=z, z=-y
+			const convPos = [position[0], position[2], position[1] * -1];
+
+			this.particleEmitters[i] = {
+				particleId,
+				flags,
+				position: convPos,
+				bone,
+				texturePacked,
+				geometryModel,
+				recursionModel,
+				blendingType,
+				emitterType,
+				particleColorIndex,
+				multiTextureParamX: [multiTextureParamX0, multiTextureParamX1],
+				textureTileRotation,
+				textureRows: rows,
+				textureCols: cols,
+				emissionSpeed,
+				speedVariation,
+				verticalRange,
+				horizontalRange,
+				gravity,
+				lifespan,
+				lifespanVary,
+				emissionRate,
+				emissionRateVary,
+				emissionAreaLength,
+				emissionAreaWidth,
+				zSource,
+				colorTrack,
+				alphaTrack,
+				scaleTrack,
+				scaleVary: [scaleVaryX, scaleVaryY],
+				headCellTrack,
+				tailCellTrack,
+				tailLength,
+				twinkleSpeed,
+				twinklePercent,
+				twinkleScale: { min: twinkleScaleMin, max: twinkleScaleMax },
+				burstMultiplier,
+				drag,
+				baseSpin,
+				baseSpinVary,
+				spin,
+				spinVary,
+				tumble,
+				windVector,
+				windTime,
+				followSpeed1,
+				followScale1,
+				followSpeed2,
+				followScale2,
+				multiTextureParam0,
+				multiTextureParam1,
+				splinePoints,
+				enabledIn
+			};
+		}
+
+		this.data.seek(base);
 	}
 
 	/**

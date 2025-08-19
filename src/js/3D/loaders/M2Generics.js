@@ -41,6 +41,10 @@ function read_m2_array_array(data, ofs, dataType, useAnims = false, animFiles = 
 						animFiles.get(i).seek(subArrOfs + (j * 2));
 						arr[i][j] = animFiles.get(i).readInt16LE();
 						break;
+					case "float":
+						animFiles.get(i).seek(subArrOfs + (j * 4));
+						arr[i][j] = animFiles.get(i).readFloatLE();
+						break;
 					case "float3":
 						animFiles.get(i).seek(subArrOfs + (j * 12));
 						arr[i][j] = animFiles.get(i).readFloatLE(3);
@@ -67,6 +71,9 @@ function read_m2_array_array(data, ofs, dataType, useAnims = false, animFiles = 
 						break;
 					case "int16":
 						arr[i][j] = data.readInt16LE();
+						break;
+					case "float":
+						arr[i][j] = data.readFloatLE();
 						break;
 					case "float3":
 						arr[i][j] = data.readFloatLE(3);
@@ -117,4 +124,62 @@ function read_caa_bb(data) {
 	return { min: data.readFloatLE(3), max: data.readFloatLE(3) };
 }
 
-module.exports = { M2Track, read_m2_array_array, read_m2_track, read_caa_bb }
+/**
+ * Read a 1D M2Array of a given data type at the current position.
+ * Returns a flat array of values.
+ */
+function read_m2_array(data, ofs, dataType) {
+    const arrCount = data.readUInt32LE();
+    const arrOfs = data.readUInt32LE();
+
+    const base = data.offset;
+    const result = new Array(arrCount);
+
+    if (arrCount > 0 && arrOfs > 0) {
+        data.seek(ofs + arrOfs);
+
+        for (let i = 0; i < arrCount; i++) {
+            switch (dataType) {
+                case "uint32":
+                    result[i] = data.readUInt32LE();
+                    break;
+                case "int16":
+                    result[i] = data.readInt16LE();
+                    break;
+                case "uint16":
+                    result[i] = data.readUInt16LE();
+                    break;
+                case "uint8":
+                    result[i] = data.readUInt8();
+                    break;
+                case "float":
+                    result[i] = data.readFloatLE();
+                    break;
+                case "float2":
+                    result[i] = data.readFloatLE(2);
+                    break;
+                case "float3":
+                    result[i] = data.readFloatLE(3);
+                    break;
+                default:
+                    throw new Error(`Unknown data type for read_m2_array: ${dataType}`);
+            }
+        }
+    }
+
+    data.seek(base);
+    return result;
+}
+
+/**
+ * Read an M2PartTrack: a single set of timestamps (uint16) and values (various types), normalized age-based.
+ */
+function read_m2_part_track(data, ofs, valueType) {
+    // timestamps: M2Array<uint16>
+    const timestamps = read_m2_array(data, ofs, "uint16");
+    // values: M2Array<valueType>
+    const values = read_m2_array(data, ofs, valueType);
+    return { timestamps, values };
+}
+
+module.exports = { M2Track, read_m2_array_array, read_m2_track, read_caa_bb, read_m2_array, read_m2_part_track }

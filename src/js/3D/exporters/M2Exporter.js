@@ -576,6 +576,9 @@ class M2Exporter {
 				fileName: skin.fileName,
 				fileDataID: skin.fileDataID
 			});
+			json.addProperty('ribbonEmitters', this.m2.ribbonEmitters);
+			if (this.m2.particleEmitters)
+				json.addProperty('particleEmitters', this.m2.particleEmitters);
 
 			await json.write(config.overwriteFiles);
 			fileManifest?.push({ type: 'META', fileDataID: this.fileDataID, file: json.out });
