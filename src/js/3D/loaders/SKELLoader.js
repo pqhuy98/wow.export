@@ -7,6 +7,7 @@
 const CHUNK_SKB1 = 0x31424B53;
 const CHUNK_SKPD = 0x44504B53;
 const CHUNK_SKS1 = 0x31534B53;
+const CHUNK_SKA1 = 0x31414B53;
 const CHUNK_AFID = 0x44494641;
 const CHUNK_BFID = 0x44494642;
 
@@ -43,6 +44,7 @@ class SKELLoader {
 			const nextChunkPos = this.data.offset + chunkSize;
 	
 			switch (chunkID) {
+				case CHUNK_SKA1: this.parse_chunk_ska1(); break;
 				case CHUNK_SKB1: this.parse_chunk_skb1(); break;
 				case CHUNK_SKPD: this.parse_chunk_skpd(); break;
 				case CHUNK_SKS1: this.parse_chunk_sks1(); break;
@@ -205,6 +207,56 @@ class SKELLoader {
 
 		// Unused spot (for now)
 		this.data.move(8);
+	}
+
+	parse_chunk_ska1(useAnims = false) {
+		const data = this.data;
+		const chunk_ofs = data.offset;
+		this.attachmentsOffset = chunk_ofs;
+
+		const attachmentCount = data.readUInt32LE();
+		const attachmentOfs = data.readUInt32LE();
+		const lookupCount = data.readUInt32LE();
+		const lookupOfs = data.readUInt32LE();
+
+		log.write('[SKEL] SKA1 header attachments=' + attachmentCount + ' ofs=' + attachmentOfs + ' lookupCount=' + lookupCount + ' lookupOfs=' + lookupOfs + ' chunkOfs=0x' + chunk_ofs.toString(16));
+
+		const base = data.offset;
+
+		if (attachmentCount > 0 && attachmentOfs > 0) {
+			data.seek(chunk_ofs + attachmentOfs);
+			const entries = this.attachments = new Array(attachmentCount);
+			for (let i = 0; i < attachmentCount; i++) {
+				const attachment = {
+					id: data.readUInt32LE(),
+					bone: data.readUInt16LE(),
+					unknown: data.readUInt16LE(),
+					position: data.readFloatLE(3),
+					animateAttached: M2Generics.read_m2_track(data, chunk_ofs, "uint8", useAnims, this.animFiles),
+				};
+
+				// Match attachment position conversion used in M2 loader: x=x, y=z, z=-y
+				const pos = attachment.position;
+				const posX = pos[0];
+				const posY = pos[1];
+				const posZ = pos[2];
+				pos[0] = posX;
+				pos[2] = posY * -1;
+				pos[1] = posZ;
+
+				entries[i] = attachment;
+				if (i < 10) log.write('[SKEL] SKA1 att[' + i + '] id=' + attachment.id + ' bone=' + attachment.bone + ' pos=[' + attachment.position.map(v => v.toFixed(4)).join(',') + '] trackTs=' + (attachment.animateAttached.timestamps ? attachment.animateAttached.timestamps.length : 0) + ' trackVals=' + (attachment.animateAttached.values ? attachment.animateAttached.values.length : 0));
+			}
+			log.write('[SKEL] Parsed ' + attachmentCount + ' attachments from SKA1');
+		}
+
+		if (lookupCount > 0 && lookupOfs > 0) {
+			data.seek(chunk_ofs + lookupOfs);
+			this.attachmentLookup = data.readUInt16LE(lookupCount);
+			log.write('[SKEL] Parsed attachment lookup, count=' + this.attachmentLookup.length);
+		}
+
+		data.seek(base);
 	}
 
 	/**

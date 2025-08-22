@@ -59,14 +59,6 @@ class M2Exporter {
 	}
 
 	/**
-	 * Set merged attachments for head model exports
-	 * @param {Array} mergedAttachments - Merged attachments from main model
-	 */
-	setMergedAttachments(mergedAttachments) {
-		this.mergedAttachments = mergedAttachments;
-	}
-
-	/**
 	 * Export the textures for this M2 model.
 	 * @param {string} out 
 	 * @param {boolean} raw
@@ -512,14 +504,8 @@ class M2Exporter {
 			json.addProperty('boneWeights', this.m2.boneWeights);
 			json.addProperty('boneIndicies', this.m2.boneIndices);
 
-			// Add attachments: model's own attachments first, then merged attachments, else empty array
-			if (this.m2.attachments && this.m2.attachments.length > 0) 
-				json.addProperty('attachments', this.m2.attachments);
-			else if (this.mergedAttachments && this.mergedAttachments.length > 0) 
-				json.addProperty('attachments', this.mergedAttachments);
-			else 
-				json.addProperty('attachments', []);
-			
+			const attachments = this.m2.attachments || this.skel?.attachments || [];
+			json.addProperty('attachments', attachments);
 
 			await json.write(config.overwriteFiles, true);
 		}

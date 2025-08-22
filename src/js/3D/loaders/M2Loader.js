@@ -13,6 +13,7 @@ const core = require('../../core');
 const BufferWrapper = require('../../buffer');
 const AnimMapper = require('../AnimMapper');
 const log = require('../../log');
+const SKELLoader = require('./SKELLoader');
 
 const CHUNK_SFID = 0x44494653;
 const CHUNK_TXID = 0x44495854;
@@ -235,7 +236,7 @@ class M2Loader {
 		this.parseChunk_MD21_transparencyLookup(ofs);
 		this.parseChunk_MD21_textureTransformLookup(ofs);
 		this.parseChunk_MD21_collision(ofs);
-		this.parseChunk_MD21_attachments(ofs);
+		await this.parseChunk_MD21_attachments(ofs);
 		this.data.move(8); // attachmentIndicesByID / attachment_lookup_table
 		this.data.move(8); // events
 		this.data.move(8); // lights
@@ -390,13 +391,14 @@ class M2Loader {
 	 * Parse attachments data from an MD21 chunk.
 	 * @param {number} ofs 
 	 */
-	parseChunk_MD21_attachments(ofs) {
+	async parseChunk_MD21_attachments(ofs) {
 		const attachmentCount = this.data.readUInt32LE();
 		const attachmentOffset = this.data.readUInt32LE();
 
 
 		// Check if attachments are valid
 		if (attachmentCount > 0 && attachmentOffset > 0) {
+			log.write('[M2] MD21 attachments header count=' + attachmentCount + ' ofs=' + attachmentOffset + ' md21Ofs=0x' + ofs.toString(16));
 			const base = this.data.offset;
 			this.data.seek(attachmentOffset + ofs);
 
@@ -420,9 +422,29 @@ class M2Loader {
 				pos[2] = posY * -1;
 				pos[1] = posZ;
 
+				if (i < 10) log.write('[M2] MD21 att[' + i + '] id=' + entries[i].id + ' bone=' + entries[i].bone + ' pos=[' + entries[i].position.map(v => v.toFixed(4)).join(',') + '] trackTs=' + (entries[i].animateAttached.timestamps ? entries[i].animateAttached.timestamps.length : 0) + ' trackVals=' + (entries[i].animateAttached.values ? entries[i].animateAttached.values.length : 0));
+
 			}
 
+			log.write('[M2] Parsed ' + attachmentCount + ' MD21 attachments');
 			this.data.seek(base);
+		}
+
+		// Fallback: if no attachments parsed from MD21 and a skel is referenced, try SKEL's SKA1
+		if ((!this.attachments || this.attachments.length === 0) && this.skeletonFileID > 0) {
+			try {
+				log.write('[M2] No MD21 attachments found. Attempting SKEL fallback. skeletonFileID=' + this.skeletonFileID);
+				const skelData = await core.view.casc.getFile(this.skeletonFileID);
+				const skel = new SKELLoader(skelData);
+				await skel.load();
+				// If SKEL has attachments, adopt them directly
+				if (skel.attachments && skel.attachments.length > 0) {
+					this.attachments = skel.attachments;
+					log.write('[M2] Adopted ' + this.attachments.length + ' attachments from SKEL');
+				}
+			} catch (e) {
+				log.write('Failed to read attachments from SKEL: ' + e);
+			}
 		}
 	}
 

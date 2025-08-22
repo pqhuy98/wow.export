@@ -147,111 +147,6 @@ async function getLookups() {
 	return lookupsCache;
 }
 
-// --- Attachment merging for head models ---
-function generateBoneKey(bones, boneIndex) {
-	const path = [];
-	let currentIndex = boneIndex;
-	while (currentIndex >= 0 && currentIndex < bones.length) {
-		const bone = bones[currentIndex];
-		const boneName = BoneMapper.get_bone_name(bone.boneID, currentIndex, bone.boneNameCRC);
-		if (!boneName.startsWith('bone_' + currentIndex)) {
-			path.unshift(boneName);
-		} else {
-			const pivotX = Math.round(bone.pivot[0] * 50) / 50;
-			const pivotY = Math.round(bone.pivot[1] * 50) / 50;
-			const pivotZ = Math.round(bone.pivot[2] * 50) / 50;
-			path.unshift(`${pivotX},${pivotY},${pivotZ}`);
-		}
-		currentIndex = bone.parentBone;
-	}
-	return path.join('|');
-}
-
-async function mergeMainModelAttachmentsIfHead(fileDataID, exporter, casc) {
-	const fileName = listfile.getByID(fileDataID);
-	if (!fileName || !fileName.includes('_hd.m2')) { console.log('[headless] Not a head model, skipping attachment merge.'); return; }
-	const mainModelName = fileName.replace('_hd.m2', '.m2');
-	const mainFileDataID = listfile.getByFilename(mainModelName);
-	if (!mainFileDataID) { console.log('[headless] No main model found for head model:', fileName); return; }
-	const currentModel = exporter.m2;
-	await currentModel.load();
-	let currentBones = currentModel.bones;
-	if ((!currentBones || currentBones.length === 0) && currentModel.skeletonFileID) {
-		const skelData = await casc.getFile(currentModel.skeletonFileID);
-		const skel = new SKELLoader(skelData);
-		await skel.load();
-		currentBones = skel.bones;
-	}
-	if (!currentBones || currentBones.length === 0) { console.log('[headless] Head model has no bones, cannot merge attachments.'); return; }
-	const mainModelData = await casc.getFile(mainFileDataID);
-	const mainModel = new M2Loader(mainModelData);
-	await mainModel.load();
-	if (!mainModel.attachments || mainModel.attachments.length === 0) { console.log('[headless] Main model has no attachments, skipping.'); return; }
-	const currentBoneKeys = new Map();
-	for (let i = 0; i < currentBones.length; i++) {
-		const boneKey = generateBoneKey(currentBones, i);
-		currentBoneKeys.set(boneKey, i);
-	}
-	const mainBoneIDs = new Map();
-	const currentBoneIDs = new Map();
-	const mainBoneNames = new Map();
-	const currentBoneNames = new Map();
-	for (let i = 0; i < mainModel.bones.length; i++) 
-		if (mainModel.bones[i].boneID >= 0) mainBoneIDs.set(mainModel.bones[i].boneID, i);
-	
-	for (let i = 0; i < currentBones.length; i++) 
-		if (currentBones[i].boneID >= 0) currentBoneIDs.set(currentBones[i].boneID, i);
-	
-	for (let i = 0; i < mainModel.bones.length; i++) {
-		const boneName = BoneMapper.get_bone_name(mainModel.bones[i].boneID, i, mainModel.bones[i].boneNameCRC);
-		mainBoneNames.set(boneName, i);
-	}
-	for (let i = 0; i < currentBones.length; i++) {
-		const boneName = BoneMapper.get_bone_name(currentBones[i].boneID, i, currentBones[i].boneNameCRC);
-		if (!/bone_\d+/.test(boneName)) currentBoneNames.set(boneName, i);
-	}
-	const attachments = [];
-	for (const attachment of mainModel.attachments) {
-		const mainBoneIndex = attachment.bone;
-		if (mainBoneIndex >= 0 && mainBoneIndex < mainModel.bones.length) {
-			const mainBone = mainModel.bones[mainBoneIndex];
-			let currentBoneIndex = currentBoneIDs.get(mainBone.boneID);
-			if (currentBoneIndex === undefined) {
-				const mainBoneName = BoneMapper.get_bone_name(mainBone.boneID, mainBoneIndex, mainBone.boneNameCRC);
-				currentBoneIndex = currentBoneNames.get(mainBoneName);
-			}
-			if (currentBoneIndex === undefined) {
-				const mainBoneKey = generateBoneKey(mainModel.bones, mainBoneIndex);
-				currentBoneIndex = currentBoneKeys.get(mainBoneKey);
-			}
-			if (currentBoneIndex === undefined) {
-				let closestBoneIndex = -1;
-				let closestDistance = Infinity;
-				for (let i = 0; i < currentBones.length; i++) {
-					const currentBone = currentBones[i];
-					const distance = Math.sqrt(
-						Math.pow(mainBone.pivot[0] - currentBone.pivot[0], 2) +
-						Math.pow(mainBone.pivot[1] - currentBone.pivot[1], 2) +
-						Math.pow(mainBone.pivot[2] - currentBone.pivot[2], 2)
-					);
-					if (distance < closestDistance && distance < 0.1) {
-						closestDistance = distance;
-						closestBoneIndex = i;
-					}
-				}
-				if (closestBoneIndex !== -1) currentBoneIndex = closestBoneIndex;
-			}
-			if (currentBoneIndex !== undefined) {
-				const mergedAttachment = { ...attachment, bone: currentBoneIndex };
-				attachments.push(mergedAttachment);
-			}
-		}
-	}
-	exporter.setMergedAttachments(attachments);
-	if (attachments.length > 0) exporter.m2.attachments = attachments;
-	console.log(`[headless] Merged ${attachments.length} attachments for head model.`);
-}
-
 // LRU cache for already-parsed M2 models. Keeps memory bounded.
 // We use a Map that is touched on every get() so iteration order reflects recency.
 // When the size exceeds MAX_CACHE the oldest (first) entry is evicted.
@@ -313,7 +208,6 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 			addExporterToCache(fileDataID, exporter);
 			await exporter.m2.load();
 			await exporter.m2.getSkin(0);
-			await mergeMainModelAttachmentsIfHead(fileDataID, exporter, casc);
 		}
 		exporter.setExcludedAnimIds(excludeAnimationIds);
 
