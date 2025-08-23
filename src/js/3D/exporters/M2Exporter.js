@@ -86,23 +86,24 @@ class M2Exporter {
 			try {
 				const { dataURI, filename } = dataTextureInfo;
 				
-				// Use original filename if available, otherwise fall back to generic name
+				// Use original filename/path if available; otherwise fall back to generic name next to OBJ
+				let texPath;
 				let texFile;
 				let matName;
 				
 				if (filename) {
-					// Extract base name from filename and use it for the texture file
-					const baseName = path.basename(filename, '.blp');
-					texFile = baseName + '.png';
-					matName = 'mat_' + baseName;
-					console.log(`[DEBUG] Using original filename: ${filename} -> ${texFile}`);
+					// Preserve original CASC path under export directory and update MTL to point to it relatively
+					let originalPath = filename.replace(/\\/g, '/');
+					let fileNamePNG = ExportHelper.replaceExtension(originalPath, '.png');
+					texPath = ExportHelper.getExportPath(fileNamePNG);
+					texFile = path.relative(out, texPath);
+					matName = 'mat_' + path.basename(fileNamePNG, '.png');
 				} else {
-					// Fall back to generic naming
+					// Fall back to generic naming colocated with the OBJ
 					texFile = 'data-' + textureName + '.png';
+					texPath = path.join(out, texFile);
 					matName = 'mat_' + textureName;
 				}
-				
-				let texPath = path.join(out, texFile);
 
 				if (config.overwriteFiles || !await generics.fileExists(texPath)) {
 					const data = BufferWrapper.fromBase64(dataURI.replace(/^data[^,]+,/,''));

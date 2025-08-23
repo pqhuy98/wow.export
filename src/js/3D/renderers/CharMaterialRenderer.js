@@ -53,7 +53,8 @@ class CharMaterialRenderer {
 		canvas.width = width;
 		canvas.height = height;
 
-		this.gl = canvas.getContext('webgl', { preserveDrawingBuffer: true });
+		// Enable alpha so baked PNGs preserve transparency
+		this.gl = canvas.getContext('webgl', { preserveDrawingBuffer: true, alpha: true });
 		this.glCanvas = canvas;
 	}
 
@@ -172,11 +173,11 @@ class CharMaterialRenderer {
 	}
 
 	/**
-	 * Clear the canvas, resetting it to black.
+	 * Clear the canvas, resetting it to 0.
 	 */
 	clearCanvas() {
 		this.gl.viewport(0, 0, this.glCanvas.width, this.glCanvas.height);
-		this.gl.clearColor(0, 0, 0, 1);
+		this.gl.clearColor(0, 0, 0, 0);
 		this.gl.clear(this.gl.COLOR_BUFFER_BIT);
 	}
 
@@ -233,7 +234,8 @@ class CharMaterialRenderer {
 	async update() {
 		this.clearCanvas();
 		
-		this.gl.clearColor(0.5, 0.5, 0.5, 1);
+		// Keep transparent background for baked PNGs
+		this.gl.clearColor(0, 0, 0, 0);
 		this.gl.disable(this.gl.DEPTH_TEST);
 
 		// order this.textureTargets by key
