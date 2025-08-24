@@ -31,6 +31,7 @@ class M2Loader {
 		this.isLoaded = false;
 		this.isAnimLoaded = false;
 		this.animFiles = new Map();
+		this.animFileIDs = [];
 	}
 
 	/**

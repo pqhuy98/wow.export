@@ -28,6 +28,7 @@ class SKELLoader {
 		this.data = data;
 		this.isLoaded = false;
 		this.animFiles = new Map();
+		this.animFileIDs = [];
 	}
 
 	/**
