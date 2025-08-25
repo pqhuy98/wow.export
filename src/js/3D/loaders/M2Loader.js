@@ -240,7 +240,7 @@ class M2Loader {
 		await this.parseChunk_MD21_attachments(ofs);
 		this.data.move(8); // attachmentIndicesByID / attachment_lookup_table
 		this.data.move(8); // events
-		this.data.move(8); // lights
+		this.parseChunk_MD21_lights(ofs);
 		this.data.move(8); // cameras
 		this.data.move(8); // camera_lookup_table
 		this.data.move(8); // this.parseChunk_MD21_ribbon_emitters(ofs);
@@ -668,6 +668,54 @@ class M2Loader {
 				splinePoints,
 				enabledIn
 			};
+		}
+
+		this.data.seek(base);
+	}
+
+	/**
+	 * Parse lights from MD21 chunk.
+	 * See wowdev wiki: M2Light
+	 */
+	parseChunk_MD21_lights(ofs) {
+		console.log("parseChunk_MD21_lights", ofs);
+		const count = this.data.readUInt32LE();
+		const tableOfs = this.data.readUInt32LE();
+		console.log("parseChunk_MD21_lights", {count, tableOfs});
+		if (count === 0 || tableOfs === 0) return;
+
+		const base = this.data.offset;
+		this.data.seek(tableOfs + ofs);
+
+		this.lights = new Array(count);
+		for (let i = 0; i < count; i++) {
+			const type = this.data.readUInt16LE();
+			const bone = this.data.readInt16LE();
+			const position = this.data.readFloatLE(3);
+			const ambient_color = M2Generics.read_m2_track(this.data, ofs, 'float3');
+			const ambient_intensity = M2Generics.read_m2_track(this.data, ofs, 'float');
+			const diffuse_color = M2Generics.read_m2_track(this.data, ofs, 'float3');
+			const diffuse_intensity = M2Generics.read_m2_track(this.data, ofs, 'float');
+			const attenuation_start = M2Generics.read_m2_track(this.data, ofs, 'float');
+			const attenuation_end = M2Generics.read_m2_track(this.data, ofs, 'float');
+			const visibility = M2Generics.read_m2_track(this.data, ofs, 'uint8');
+
+			// Coordinate conversion like bones/attachments: x=x, y=z, z=-y
+			const convPos = [position[0], position[2], position[1] * -1];
+
+			this.lights[i] = {
+				type,
+				bone,
+				position: convPos,
+				ambient_color,
+				ambient_intensity,
+				diffuse_color,
+				diffuse_intensity,
+				attenuation_start,
+				attenuation_end,
+				visibility,
+			};
+			console.log("parseChunk_MD21_lights", this.lights[i]);
 		}
 
 		this.data.seek(base);

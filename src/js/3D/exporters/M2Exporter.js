@@ -563,15 +563,15 @@ class M2Exporter {
 			json.addProperty('boundingSphereRadius', this.m2.boundingSphereRadius);
 			json.addProperty('collisionBox', this.m2.collisionBox);
 			json.addProperty('collisionSphereRadius', this.m2.collisionSphereRadius);
+			json.addProperty('lights', this.m2.lights || []);
 			json.addProperty('skin', {
 				subMeshes: subMeshes,
 				textureUnits: skin.textureUnits,
 				fileName: skin.fileName,
 				fileDataID: skin.fileDataID
 			});
-			json.addProperty('ribbonEmitters', this.m2.ribbonEmitters);
-			if (this.m2.particleEmitters)
-				json.addProperty('particleEmitters', this.m2.particleEmitters);
+			json.addProperty('ribbonEmitters', this.m2.ribbonEmitters || []);
+			json.addProperty('particleEmitters', this.m2.particleEmitters || []);
 
 			await json.write(config.overwriteFiles);
 			fileManifest?.push({ type: 'META', fileDataID: this.fileDataID, file: json.out });
