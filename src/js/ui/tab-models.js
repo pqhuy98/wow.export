@@ -109,6 +109,55 @@ const previewTextureByID = async (fileDataID, name) => {
 	core.view.isBusy--;
 };
 
+function getSkinForDisplay(modelName, display) {
+	const texture = display.textures[0];
+	
+	let cleanSkinName = '';
+	let skinName = listfile.getByID(texture);
+	if (skinName !== undefined) {
+		// Display the texture name without path/extension.
+		skinName = path.basename(skinName, '.blp');
+		cleanSkinName = skinName.replace(modelName, '').replace('_', '');
+	} else {
+		// Handle unknown textures.
+		skinName = 'unknown_' + texture;
+	}
+
+	if (cleanSkinName.length === 0)
+		cleanSkinName = 'base';
+
+	if (display.extraGeosets?.length > 0)
+		skinName += display.extraGeosets.join(',');
+
+	cleanSkinName += ' (' + display.ID + ')';
+
+	return {
+		id: skinName,
+		label: cleanSkinName,
+		displayID: display.ID,
+		extraGeosets: display.extraGeosets,
+		textures: display.textures,
+	};
+}
+
+function getAllSkinsForModel(fileDataID) {
+	let modelName = listfile.getByID(fileDataID);
+	modelName = path.basename(modelName, 'm2');
+
+	const displays = getModelDisplays(fileDataID);
+	if (!displays) return [];
+	const skinList = [];
+	for (const display of displays) {
+		if (display.textures.length === 0)
+			continue;
+
+		const skin = getSkinForDisplay(modelName, display);
+		skinList.push(skin);
+	}
+
+	return skinList;
+}
+
 const previewModel = async (fileName) => {
 	core.view.isBusy++;
 	core.setToast('progress', util.format('Loading %s, please wait...', fileName), null, -1, false);
@@ -163,49 +212,15 @@ const previewModel = async (fileName) => {
 		await activeRenderer.load();
 
 		if (isM2) {
-			const displays = getModelDisplays(fileDataID);
-
-			const skinList = [];
-			let modelName = listfile.getByID(fileDataID);
-			modelName = path.basename(modelName, 'm2');
-
-			for (const display of displays) {
-				if (display.textures.length === 0)
-					continue;
-
-				const texture = display.textures[0];
-
-				let cleanSkinName = '';
-				let skinName = listfile.getByID(texture);
-				if (skinName !== undefined) {
-					// Display the texture name without path/extension.
-					skinName = path.basename(skinName, '.blp');
-					cleanSkinName = skinName.replace(modelName, '').replace('_', '');
-				} else {
-					// Handle unknown textures.
-					skinName = 'unknown_' + texture;
-				}
-
-				if (cleanSkinName.length === 0)
-					cleanSkinName = 'base';
-
-				if (display.extraGeosets?.length > 0)
-					skinName += display.extraGeosets.join(',');
-
-				cleanSkinName += ' (' + display.ID + ')';
-
-				if (activeSkins.has(skinName))
-					continue;
-
-				// Push the skin onto the display list.
-				skinList.push({ id: skinName, label: cleanSkinName });
-
-				// Keep a mapping of the name -> fileDataID for user selects.
-				activeSkins.set(skinName, display);
-			}
+			const skinList = getAllSkinsForModel(fileDataID);
 
 			core.view.modelViewerSkins = skinList;
-			core.view.modelViewerSkinsSelection = skinList.slice(0, 1);
+
+			for (const skin of skinList) {
+				activeSkins.set(skin.id, skin);
+			}
+
+			core.view.modelViewerSkinsSelection = core.view.modelViewerSkins.slice(0, 1);
 
 			// if (fileNameLower.endsWith('.m2')) {
 			// 	const animList = [];
@@ -302,26 +317,12 @@ const getVariantTextureIDs = (fileName) => {
  * @returns {Array}
  */
 const getSkinTextureIDsByName = (fileDataID, skinName) => {
-	const displays = getModelDisplays(fileDataID);
-	if (!displays) return [];
-
-	// Find display with matching skin name
-	for (const display of displays) {
-		if (display.textures.length === 0) continue;
-		
-		const texture = display.textures[0];
-		const textureName = listfile.getByID(texture);
-		if (textureName) {
-			const cleanName = path.basename(textureName, '.blp');
-			if (cleanName.includes(skinName) || skinName === 'base') 
-				return display.textures;
-			
-		}
-	}
-	
-	// Fallback to first available skin
-	return displays.find(e => e.textures.length > 0)?.textures ?? [];
+	const allSkins = getAllSkinsForModel(fileDataID);
+	console.log('allSkins', allSkins);
+	const selectedSkin = allSkins.find(e => e.id === skinName);
+	return selectedSkin?.textures ?? [];
 };
+
 
 const exportFiles = async (files, isLocal = false, exportID = -1) => {
 	// Convert files to model format for exportFilesWithSkins
@@ -343,6 +344,37 @@ const exportFiles = async (files, isLocal = false, exportID = -1) => {
 	return exportFilesWithSkins(models, isLocal, exportID);
 };
 
+const buildGeosetMaskForSkin = async (exporter, skin) => {
+	await exporter.m2.load();
+	const m2Skin = await exporter.m2.getSkin(0);
+
+	const extraSet = new Set(skin?.extraGeosets ?? []);
+	const mask = new Array(m2Skin.subMeshes.length);
+
+
+	console.log('subMeshes', m2Skin.subMeshes);
+
+	for (let i = 0; i < m2Skin.subMeshes.length; i++) {
+		const mesh = m2Skin.subMeshes[i];
+		const id = mesh.submeshID;
+
+		mask[i] = { id, checked: true };
+
+		// If extra geosets are provided, first disable 0..900 range, then enable explicit extras.
+		if (skin?.extraGeosets !== undefined) {
+			if (id > 0 && id < 900) mask[i].checked = false;
+			if (extraSet.has(id)) mask[i].checked = true;
+		} else {
+			// Default selection logic mirrors UI: enable ids ending with '0' or '01'.
+			const idStr = id.toString();
+			mask[i].checked = (idStr.endsWith('0') || idStr.endsWith('01'));
+		}
+
+		console.log('mask id', id, 'checked', mask[i].checked);
+	}
+
+	return mask;
+};
 
 /**
  * Export files with skin-aware support for RCP.
@@ -504,6 +536,19 @@ const exportFilesWithSkins = async (models, isLocal = false, exportID = -1) => {
 						if (fileType === MODEL_TYPE_M2) {
 							const exporter = new M2Exporter(data, variantTextureIDs, fileDataID);
 
+							// Apply geoset masking using selected display.extraGeosets for non-active exports.
+							if (fileName == activePath) {
+								exporter.setGeosetMask(core.view.modelViewerGeosets);
+							} else {
+								const allSkins = getAllSkinsForModel(fileDataID);
+								console.log('allSkins', allSkins);
+								const selectedSkin = allSkins.find(e => e.id === skinName);
+								console.log('selectedSkin', selectedSkin);
+								const mask = await buildGeosetMaskForSkin(exporter, selectedSkin);
+								console.log('mask', mask);
+								exporter.setGeosetMask(mask);
+							}
+
 							// Respect geoset masking for selected model.
 							if (fileName == activePath)
 								exporter.setGeosetMask(core.view.modelViewerGeosets);
@@ -646,58 +691,12 @@ core.events.on('rcp-export-models', (models, id) => {
 
 core.events.on('rcp-get-model-skins', (fileDataID, client) => {
 	// Get all available skins for the given model fileDataID
-	const displays = getModelDisplays(fileDataID);
-	const skins = [];
-
-	if (displays) {
-		let modelName = listfile.getByID(fileDataID);
-		if (modelName) {
-			modelName = path.basename(modelName, 'm2');
-
-			for (const display of displays) {
-				if (display.textures.length === 0)
-					continue;
-
-				const texture = display.textures[0];
-
-				let cleanSkinName = '';
-				let skinName = listfile.getByID(texture);
-				if (skinName !== undefined) {
-					// Display the texture name without path/extension.
-					skinName = path.basename(skinName, '.blp');
-					cleanSkinName = skinName.replace(modelName, '').replace('_', '');
-				} else {
-					// Handle unknown textures.
-					skinName = 'unknown_' + texture;
-				}
-
-				if (cleanSkinName.length === 0)
-					cleanSkinName = 'base';
-
-				if (display.extraGeosets?.length > 0)
-					skinName += display.extraGeosets.join(',');
-
-				cleanSkinName += ' (' + display.ID + ')';
-
-				// Check if we already have this skin
-				if (skins.some(s => s.id === skinName))
-					continue;
-
-				skins.push({
-					id: skinName,
-					label: cleanSkinName,
-					displayID: display.ID,
-					textureIDs: display.textures,
-					extraGeosets: display.extraGeosets || []
-				});
-			}
-		}
-	}
+	const skins = getAllSkinsForModel(fileDataID);
 
 	// Send the response back to the client
 	client.sendData('MODEL_SKINS', {
 		fileDataID: fileDataID,
-		skins: skins
+		skins
 	});
 });
 

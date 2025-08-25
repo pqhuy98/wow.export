@@ -81,6 +81,9 @@ class M2Exporter {
 
 		let textureIndex = 0;
 
+		console.log('this.dataTextures', this.dataTextures);
+		console.log('this.m2.textures', this.m2.textures);
+
 		// Export data textures first.
 		for (const [textureName, dataTextureInfo] of this.dataTextures) {
 			try {
@@ -157,11 +160,14 @@ class M2Exporter {
 					targetFileDataID = this.variantTextures[textureType - 2];
 				}
 
-				texFileDataID = targetFileDataID;
-
-				// Backward patch the variant texture into the M2 instance so that
-				// the MTL exports with the correct texture once we swap it here.
-				texture.fileDataID = targetFileDataID;
+				// Only override if a valid replacement is provided; otherwise keep original.
+				const hasValidReplacement = (typeof targetFileDataID === 'string') || (Number.isInteger(targetFileDataID) && targetFileDataID > 0);
+				if (hasValidReplacement) {
+					texFileDataID = targetFileDataID;
+					// Backward patch the variant texture into the M2 instance so that
+					// the MTL exports with the correct texture once we swap it here.
+					texture.fileDataID = targetFileDataID;
+				}
 			}
 			
 			if ((typeof texFileDataID === 'string' && texFileDataID.startsWith('data-')) || (!Number.isNaN(texFileDataID) && texFileDataID > 0)) {

@@ -211,8 +211,7 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 		}
 		exporter.setExcludedAnimIds(excludeAnimationIds);
 
-		// 3. Merge attachments for head models
-		// 4. Build geoset mask (UI logic, aligned by submeshID)
+		// Build geoset mask (UI logic, aligned by submeshID)
 		const skin = exporter.m2.skins?.[0];
 		const subMeshes = skin?.subMeshes || [];
 		const enabledGeosetIds = new Set();
@@ -222,9 +221,11 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 			if (geoset !== undefined) enabledGeosetIds.add(geoset);
 		}
 
+		console.log('enabledGeosetIds', enabledGeosetIds);
+
 		// Build initial geoset mask. This now mirrors the default logic used by the UI (see M2Renderer)
 		const geosetGroup = id => Math.floor(id / 100) * 100;
-		let geosetMask = subMeshes.map(subMesh => {
+		const geosetMask = subMeshes.map(subMesh => {
 			const id = subMesh.submeshID;
 
 			// Default-on rules (taken from M2Renderer)
@@ -234,6 +235,7 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 				isDefault = false;
 
 			const checked = enabledGeosetIds.has(id) || isDefault;
+			if (checked) console.log('subMesh', subMesh, {checked, isDefault, inEnabledGeosetIds: enabledGeosetIds.has(id)});
 			return { id, checked };
 		});
 
@@ -311,7 +313,9 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 				const target = chrMaterial.textureTargets.find(t => t.filename);
 				if (target && target.filename) originalFilename = target.filename;
 			}
-			exporter.addURITexture(chrModelTextureTarget, chrMaterial.getURI(), originalFilename);
+			// Key baked overlays by TextureType so exporter can match by this.m2.textureTypes
+			const textureTypeKey = (chrMaterial.textureTargets && chrMaterial.textureTargets[0]?.textureLayer?.TextureType) ?? chrModelTextureTarget;
+			exporter.addURITexture(textureTypeKey, chrMaterial.getURI(), originalFilename);
 		}
 		// 6. Export
 		const helper = new ExportHelper(1, 'model');
