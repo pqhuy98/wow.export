@@ -243,7 +243,7 @@ class M2Loader {
 		this.parseChunk_MD21_lights(ofs);
 		this.data.move(8); // cameras
 		this.data.move(8); // camera_lookup_table
-		this.data.move(8); // this.parseChunk_MD21_ribbon_emitters(ofs);
+		this.parseChunk_MD21_ribbon_emitters(ofs);
 		this.parseChunk_MD21_particle_emitters(ofs);
 		
 		// // if 0x8 is set, textureCombinerCombos
@@ -461,26 +461,46 @@ class M2Loader {
 
 			this.ribbonEmitters = new Array(ribbonEmitterCount);
 			for (let i = 0; i < ribbonEmitterCount; i++) {
+				const ribbonId = this.data.readUInt32LE();
+				const boneIndex = this.data.readUInt32LE();
+				const position = this.data.readFloatLE(3);
+				const textureIndices = M2Generics.read_m2_array(this.data, this.md21Ofs, "uint16");
+				const materialIndices = M2Generics.read_m2_array(this.data, this.md21Ofs, "uint16");
+				const colorTrack = M2Generics.read_m2_track(this.data, this.md21Ofs, "float3");
+				const alphaTrack = M2Generics.read_m2_track(this.data, this.md21Ofs, "int16");
+				const heightAboveTrack = M2Generics.read_m2_track(this.data, this.md21Ofs, "float");
+				const heightBelowTrack = M2Generics.read_m2_track(this.data, this.md21Ofs, "float");
+				const edgesPerSecond = this.data.readFloatLE();
+				const edgeLifetime = this.data.readFloatLE();
+				const gravity = this.data.readFloatLE();
+				const textureRows = this.data.readUInt16LE();
+				const textureCols = this.data.readUInt16LE();
+				const texSlotTrack = M2Generics.read_m2_track(this.data, this.md21Ofs, "uint16");
+				const visibilityTrack = M2Generics.read_m2_track(this.data, this.md21Ofs, "uint8");
+				const priorityPlane = this.data.readInt16LE();
+				const ribbonColorIndex = this.data.readInt8();
+				const textureTransformLookupIndex = this.data.readInt8();
+
 				this.ribbonEmitters[i] = {
-					ribbonId: this.data.readUInt32LE(),
-					boneIndex: this.data.readUInt32LE(), // Fixed: should be uint32, not uint16
-					position: this.data.readFloatLE(3),
-					textureIndices: this.data.readUInt16LE(this.data.readUInt32LE()),
-					materialIndices: this.data.readUInt16LE(this.data.readUInt32LE()),
-					colorTrack: M2Generics.read_m2_track(this.data, this.md21Ofs, "float3"),
-					alphaTrack: M2Generics.read_m2_track(this.data, this.md21Ofs, "int16"),
-					heightAboveTrack: M2Generics.read_m2_track(this.data, this.md21Ofs, "float"),
-					heightBelowTrack: M2Generics.read_m2_track(this.data, this.md21Ofs, "float"),
-					edgesPerSecond: this.data.readFloatLE(),
-					edgeLifetime: this.data.readFloatLE(),
-					gravity: this.data.readFloatLE(),
-					textureRows: this.data.readUInt16LE(),
-					textureCols: this.data.readUInt16LE(),
-					texSlotTrack: M2Generics.read_m2_track(this.data, this.md21Ofs, "uint16"),
-					visibilityTrack: M2Generics.read_m2_track(this.data, this.md21Ofs, "uint8"),
-					priorityPlane: this.data.readInt16LE(),
-					ribbonColorIndex: this.data.readInt8LE(),
-					textureTransformLookupIndex: this.data.readInt8LE(),
+					ribbonId,
+					boneIndex,
+					position,
+					textureIndices,
+					materialIndices,
+					colorTrack,
+					alphaTrack,
+					heightAboveTrack,
+					heightBelowTrack,
+					edgesPerSecond,
+					edgeLifetime,
+					gravity,
+					textureRows,
+					textureCols,
+					texSlotTrack,
+					visibilityTrack,
+					priorityPlane,
+					ribbonColorIndex,
+					textureTransformLookupIndex,
 				};
 			}
 			this.data.seek(base);

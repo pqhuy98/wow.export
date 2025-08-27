@@ -37,6 +37,10 @@ function read_m2_array_array(data, ofs, dataType, useAnims = false, animFiles = 
 						animFiles.get(i).seek(subArrOfs + (j * 4));
 						arr[i][j] = animFiles.get(i).readUInt32LE();
 						break;
+					case "uint16":
+						animFiles.get(i).seek(subArrOfs + (j * 2));
+						arr[i][j] = animFiles.get(i).readUInt16LE();
+						break;
 					case "int16":
 						animFiles.get(i).seek(subArrOfs + (j * 2));
 						arr[i][j] = animFiles.get(i).readInt16LE();
@@ -68,6 +72,9 @@ function read_m2_array_array(data, ofs, dataType, useAnims = false, animFiles = 
 				switch (dataType) {
 					case "uint32":
 						arr[i][j] = data.readUInt32LE();
+						break;
+					case "uint16":
+						arr[i][j] = data.readUInt16LE();
 						break;
 					case "int16":
 						arr[i][j] = data.readInt16LE();
