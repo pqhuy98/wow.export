@@ -211,45 +211,48 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 		}
 		exporter.setExcludedAnimIds(excludeAnimationIds);
 
-		// Build geoset mask (UI logic, aligned by submeshID)
 		const skin = exporter.m2.skins?.[0];
 		const subMeshes = skin?.subMeshes || [];
-		const enabledGeosetIds = new Set();
-		for (const [, choiceID] of Object.entries(customizations || {})) {
-			const chrCustGeoID = lookups.choiceToGeoset.get(Number(choiceID));
-			const geoset = lookups.geosetMap.get(chrCustGeoID);
-			if (geoset !== undefined) enabledGeosetIds.add(geoset);
-		}
-
-		console.log('enabledGeosetIds', enabledGeosetIds);
 
 		// Build initial geoset mask. This now mirrors the default logic used by the UI (see M2Renderer)
 		const geosetGroup = id => Math.floor(id / 100) * 100;
+		const defaultGeosets = new Set([0, 401, 501, 601, 702, 801, 901, 1001, 1101, 1201, 1301, 1400, 1501, 1600, 1700, 1801, 1901, 2001, 2101, 2201, 2301, 2400, 2500, 2601, 2700, 2801, 2900, 3000, 3100, 3202, 3301, 3401, 3500, 3600, 3700, 3801, 3900, 4001, 4101, 4201, 4301, 4401, 4501, 4601, 4701, 4801, 4901, 5001, 5101])
+
 		const geosetMask = subMeshes.map(subMesh => {
 			const id = subMesh.submeshID;
-
-			// Default-on rules (taken from M2Renderer)
-			let isDefault = (id === 0 || id.toString().endsWith('01') || id.toString().startsWith('32'));
-			// Never enable eyeglow/earrings by default
-			if (id.toString().startsWith('17') || id.toString().startsWith('35'))
-				isDefault = false;
-
-			const checked = enabledGeosetIds.has(id) || isDefault;
-			if (checked) console.log('subMesh', subMesh, {checked, isDefault, inEnabledGeosetIds: enabledGeosetIds.has(id)});
+			const checked = defaultGeosets.has(id);
+			if (checked) console.log('subMesh is default', subMesh);
 			return { id, checked };
 		});
 
-		// Apply explicit geoset overrides (geosetIds behaves like the UI RPC tuning)
-		if (Array.isArray(geosetIds) && geosetIds.length > 0) {
-			const idsToEnable = new Set(geosetIds);
-			const groupsToOverride = new Set(geosetIds.map(id => geosetGroup(id)));
+		const turnOnGeoset = (subMeshId, turnOffOthers = true) => {
+			const group = geosetGroup(subMeshId);
+			const matchingGeosets = geosetMask.filter(geoset => geoset.id === subMeshId);
+			if (matchingGeosets.length > 0) {
+				matchingGeosets.forEach(geoset => geoset.checked = true);
+				if (group === 0 || !turnOffOthers) return; // base geometry cannot be overridden
+				geosetMask.forEach(geoset => {
+					if (group === geosetGroup(geoset.id) && geoset.id !== subMeshId) {
+						geoset.checked = false;
+					}
+				});
+			}
+		}
 
-			for (const geoset of geosetMask) {
-				const group = geosetGroup(geoset.id);
-				if (groupsToOverride.has(group)) {
-					// Within overridden groups, enable only the explicitly requested IDs
-					geoset.checked = idsToEnable.has(geoset.id);
-				}
+		// Turn on customization geosets
+		for (const [optionID, choiceID] of Object.entries(customizations || {})) {
+			const chrCustGeoID = lookups.choiceToGeoset.get(Number(choiceID));
+			const geosetId = lookups.geosetMap.get(chrCustGeoID);
+			if (geosetId !== undefined) {
+				console.log('turning on geoset', {geosetId, optionID, choiceID});
+				turnOnGeoset(geosetId, true);
+			}
+		}
+
+		if (Array.isArray(geosetIds) && geosetIds.length > 0) {
+			for (const geosetId of geosetIds) {
+				console.log('turning on geoset per RCP request', {geosetId});
+				turnOnGeoset(geosetId, false);
 			}
 		}
 
@@ -257,9 +260,14 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 			const idsToHide = new Set(hideGeosetIds);
 			for (const geoset of geosetMask) {
 				if (idsToHide.has(geoset.id)) {
+					console.log('Hide geoset per RCP request', geoset.id, geoset);
 					geoset.checked = false;
 				}
 			}
+		}
+
+		for(const geoset of geosetMask) {
+			if (geoset.checked) console.log('geoset is checked', geoset);
 		}
 
 		exporter.setGeosetMask(geosetMask);

@@ -100,7 +100,7 @@ class M2Loader {
 			}
 
 			if ((animation.flags & 0x20) === 0x20) {
-				log.write("Skipping .anim loading for " + AnimMapper.get_anim_name(animation.id) + " because it should be in M2");
+				// log.write("Skipping .anim loading for " + AnimMapper.get_anim_name(animation.id) + " because it should be in M2");
 				continue;
 			}
 
@@ -111,7 +111,7 @@ class M2Loader {
 				const fileDataID = entry.fileDataID;
 				if (!this.animFiles.has(i)) {
 					if (fileDataID === 0) {
-						log.write("Skipping .anim loading for " + AnimMapper.get_anim_name(entry.animID) + " because it has no fileDataID");
+						// log.write("Skipping .anim loading for " + AnimMapper.get_anim_name(entry.animID) + " because it has no fileDataID");
 						continue;
 					}
 					

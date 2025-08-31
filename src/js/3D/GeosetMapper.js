@@ -75,7 +75,7 @@ const getGeosetName = (index, id) => {
 const map = async (geosets) => {
 	for (let i = 0, n = geosets.length; i < n; i++) {
 		const geoset = geosets[i];
-		geoset.label = getGeosetName(i, geoset.id);
+		geoset.label = getGeosetName(i, geoset.id) + " - " + geoset.id;
 	}
 };
 
