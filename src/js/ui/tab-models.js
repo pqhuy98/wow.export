@@ -539,7 +539,7 @@ const exportFilesWithSkins = async (models, isLocal = false, exportID = -1) => {
 							// Apply geoset masking using selected display.extraGeosets for non-active exports.
 							if (fileName == activePath) {
 								exporter.setGeosetMask(core.view.modelViewerGeosets);
-							} else {
+							} else if (skinName) {
 								const allSkins = getAllSkinsForModel(fileDataID);
 								console.log('allSkins', allSkins);
 								const selectedSkin = allSkins.find(e => e.id === skinName);
@@ -548,10 +548,6 @@ const exportFilesWithSkins = async (models, isLocal = false, exportID = -1) => {
 								console.log('mask', mask);
 								exporter.setGeosetMask(mask);
 							}
-
-							// Respect geoset masking for selected model.
-							if (fileName == activePath)
-								exporter.setGeosetMask(core.view.modelViewerGeosets);
 
 							if (format === 'OBJ') {
 								await exporter.exportAsOBJ(exportPath, core.view.config.modelsExportCollision, helper, fileManifest);
