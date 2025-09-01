@@ -252,7 +252,7 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 		if (Array.isArray(geosetIds) && geosetIds.length > 0) {
 			for (const geosetId of geosetIds) {
 				console.log('turning on geoset per RCP request', {geosetId});
-				turnOnGeoset(geosetId, false);
+				turnOnGeoset(geosetId, true);
 			}
 		}
 
@@ -315,14 +315,14 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 			}
 		}
 		exporter.resetURITextures();
-		for (const [chrModelTextureTarget, chrMaterial] of chrMaterials) {
+		for (const [textureType, chrMaterial] of chrMaterials) {
 			let originalFilename = null;
 			if (chrMaterial.textureTargets && chrMaterial.textureTargets.length > 0) {
 				const target = chrMaterial.textureTargets.find(t => t.filename);
 				if (target && target.filename) originalFilename = target.filename;
 			}
-			// Key baked overlays by TextureType so exporter can match by this.m2.textureTypes
-			const textureTypeKey = (chrMaterial.textureTargets && chrMaterial.textureTargets[0]?.textureLayer?.TextureType) ?? chrModelTextureTarget;
+			// Key baked overlays strictly by TextureType so exporter can match by this.m2.textureTypes
+			const textureTypeKey = Number(textureType);
 			exporter.addURITexture(textureTypeKey, chrMaterial.getURI(), originalFilename);
 		}
 		// 6. Export

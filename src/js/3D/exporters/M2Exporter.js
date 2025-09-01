@@ -534,7 +534,12 @@ class M2Exporter {
 			const textures = new Array(this.m2.textures.length);
 			for (let i = 0, n = textures.length; i < n; i++) {
 				const texture = this.m2.textures[i];
-				const textureEntry = validTextures.get(texture.fileDataID);
+				const texType = this.m2.textureTypes[i];
+				let textureEntry = validTextures.get(texture.fileDataID);
+
+				// Fallback for data textures whose fileDataID may be 0 or not mapped yet
+				if (!textureEntry && this.dataTextures.has(texType))
+					textureEntry = validTextures.get('data-' + texType);
 
 				textures[i] = Object.assign({
 					fileNameInternal: listfile.getByID(texture.fileDataID),
