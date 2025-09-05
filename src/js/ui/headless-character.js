@@ -150,7 +150,7 @@ async function getLookups() {
 // LRU cache for already-parsed M2 models. Keeps memory bounded.
 // We use a Map that is touched on every get() so iteration order reflects recency.
 // When the size exceeds MAX_CACHE the oldest (first) entry is evicted.
-const MAX_CACHE = 10;
+const MAX_CACHE = 50;
 const m2ExporterCache = new Map();
 
 function getCachedExporter(fileDataID) {
