@@ -52,8 +52,10 @@ async function getLookups() {
 	const chrCustElementDB = new WDCReader('DBFilesClient/ChrCustomizationElement.db2');
 	await chrCustElementDB.parse();
 	for (const row of chrCustElementDB.getAllRows().values()) {
-		if (row.ChrCustomizationGeosetID != 0)
-			choiceToGeoset.set(row.ChrCustomizationChoiceID, row.ChrCustomizationGeosetID);
+		if (row.ChrCustomizationGeosetID != 0) {
+			if (!choiceToGeoset.has(row.ChrCustomizationChoiceID)) choiceToGeoset.set(row.ChrCustomizationChoiceID, []);
+			choiceToGeoset.get(row.ChrCustomizationChoiceID).push(row.ChrCustomizationGeosetID);			
+		}
 		if (row.ChrCustomizationSkinnedModelID != 0)
 			choiceToSkinnedModel.set(row.ChrCustomizationChoiceID, row.ChrCustomizationSkinnedModelID);
 		if (row.ChrCustomizationBoneSetID != 0)
@@ -84,8 +86,10 @@ async function getLookups() {
 	const chrCustChoiceDB = new WDCReader('DBFilesClient/ChrCustomizationChoice.db2');
 	await chrCustChoiceDB.parse();
 	for (const row of chrCustChoiceDB.getAllRows().values()) {
-		if (!choiceToGeoset.has(row.ID))
-			choiceToGeoset.set(row.ID, row.ChrCustomizationGeosetID);
+		if (row.ChrCustomizationGeosetID) {
+			if (!choiceToGeoset.has(row.ChrCustomizationChoiceID)) choiceToGeoset.set(row.ChrCustomizationChoiceID, []);
+			choiceToGeoset.get(row.ChrCustomizationChoiceID).push(row.ChrCustomizationGeosetID);
+		}
 		if (!choiceToChrCustMaterialID.has(row.ID))
 			choiceToChrCustMaterialID.set(row.ID, []);
 	}
@@ -241,11 +245,13 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 
 		// Turn on customization geosets
 		for (const [optionID, choiceID] of Object.entries(customizations || {})) {
-			const chrCustGeoID = lookups.choiceToGeoset.get(Number(choiceID));
-			const geosetId = lookups.geosetMap.get(chrCustGeoID);
-			if (geosetId !== undefined) {
-				console.log('turning on geoset', {geosetId, optionID, choiceID});
-				turnOnGeoset(geosetId, true);
+			const chrCustGeoIds = lookups.choiceToGeoset.get(Number(choiceID));
+			for(const chrCustGeoID of chrCustGeoIds || []) {
+				const geosetId = lookups.geosetMap.get(chrCustGeoID);
+				if (geosetId !== undefined) {
+					console.log('turning on geoset', {geosetId, optionID, choiceID});
+					turnOnGeoset(geosetId, true);
+				}
 			}
 		}
 
