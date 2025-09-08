@@ -93,7 +93,7 @@ RUN mkdir -p /tmp/xdg-config /tmp/xdg-cache /tmp/xdg-data /tmp/wowexport \
   && chmod -R 777 /tmp/xdg-config /tmp/xdg-cache /tmp/xdg-data /tmp/wowexport
 
 # Add entrypoint to run under Xvfb (build context is wow.export/)
-COPY docker/entrypoint.sh /entrypoint.sh
+COPY docker/helpers/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
