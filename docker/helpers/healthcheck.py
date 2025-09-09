@@ -38,6 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="wow.export RPC healthcheck")
     parser.add_argument("--host", default="127.0.0.1", help="RPC host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=17751, help="RPC port (default: 17751)")
+    parser.add_argument("--rest-port", type=int, default=17752, help="REST port (default: 17752)")
     parser.add_argument("--timeout", type=float, default=5.0, help="Socket timeout seconds (default: 5.0)")
     parser.add_argument("--quiet", action="store_true", help="Quiet mode (exit status only)")
     return parser.parse_args()
@@ -48,9 +49,19 @@ def main() -> int:
     try:
         cfg = send_rcp(args.host, args.port, {"id": "CONFIG_GET"}, timeout=args.timeout)
         casc = send_rcp(args.host, args.port, {"id": "GET_CASC_INFO"}, timeout=args.timeout)
+        # Try REST endpoint, but ignore errors for readiness
+        rest = None
+        try:
+            import urllib.request, json as jsonlib
+            with urllib.request.urlopen(f"http://{args.host}:{args.rest_port}/rest/GET_CASC_INFO", timeout=args.timeout) as resp:
+                rest = jsonlib.loads(resp.read().decode("utf-8"))
+        except Exception:
+            pass
         if not args.quiet:
             print("CONFIG_GET:", json.dumps(cfg, indent=2))
             print("GET_CASC_INFO:", json.dumps(casc, indent=2))
+            if rest is not None:
+                print("REST GET_CASC_INFO:", json.dumps(rest, indent=2))
             print("OK")
         return 0
     except Exception as exc:

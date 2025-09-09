@@ -3,20 +3,19 @@
 ARG NODE_IMAGE=node:14-bullseye
 ARG UBUNTU_IMAGE=ubuntu:22.04
 
-# --- Builder: fetch latest wow.export and build linux-x64 binary
 FROM ${NODE_IMAGE} AS builder
-ARG WOW_EXPORT_REPO=https://github.com/pqhuy98/wow.export
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  git \
   python3 \
   make \
   g++ \
   && rm -rf /var/lib/apt/lists/*
 
-# Always clone the latest wow.export to get freshest binary
-RUN git clone --depth 1 ${WOW_EXPORT_REPO} /app/wow.export
+COPY . /app/wow.export/
+
+# Ensure submodule git metadata does not break npm install
+RUN rm -rf /app/wow.export/.git
 
 WORKDIR /app/wow.export
 RUN npm install --no-audit --no-fund
@@ -80,6 +79,7 @@ RUN chown -R root:root /opt/wow.export && chmod -R a+rX /opt/wow.export
 
 # RPC listens on 17751 by default
 EXPOSE 17751
+EXPOSE 17752
 
 ENV DISPLAY=:99
 ENV LD_LIBRARY_PATH=/opt/wow.export:/opt/wow.export/lib

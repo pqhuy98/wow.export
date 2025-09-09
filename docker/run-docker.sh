@@ -2,6 +2,7 @@
 set -euo pipefail
 
 HOST_PORT="${WOWEXPORT_PORT:-17751}"
+HOST_REST_PORT="${WOWEXPORT_REST_PORT:-17752}"
 CONTAINER_NAME="${WOWEXPORT_NAME:-wow.export}"
 ASSET_DIR_HOST="${WOWEXPORT_ASSET_DIR:-/tmp/wow.export}"
 WOW_DIR_HOST="${WOWEXPORT_WOW_DIR:-}"
@@ -31,6 +32,7 @@ MAP_FLAG=""
 
 docker run -d --name "${CONTAINER_NAME}" --restart unless-stopped \
   -p 127.0.0.1:${HOST_PORT}:17751 \
+  -p 127.0.0.1:${HOST_REST_PORT}:17752 \
   -e DISPLAY=:99 \
   -e DBUS_SESSION_BUS_ADDRESS=/dev/null \
   -w /exports \
@@ -42,6 +44,7 @@ docker run -d --name "${CONTAINER_NAME}" --restart unless-stopped \
   --user-data-dir=/tmp/wow.profile
 
 echo "WOWEXPORT_HOST_PORT=${HOST_PORT}"
+echo "WOWEXPORT_REST_HOST_PORT=${HOST_REST_PORT}"
 
 # Wait for RPC to become ready, then run healthcheck
 info "Waiting for RPC on 127.0.0.1:${HOST_PORT}..."

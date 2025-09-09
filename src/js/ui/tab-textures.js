@@ -353,8 +353,9 @@ const exportFiles = async (files, isLocal = false, exportID = -1) => {
 
 	helper.finish();
 
-	// Dispatch file manifest to RCP.
+	// Dispatch file manifest to RCP for legacy clients.
 	core.rcp.dispatchHook('HOOK_EXPORT_COMPLETE', manifest);
+	return manifest;
 };
 
 // Register a drop handler for BLP files.
@@ -427,4 +428,4 @@ core.registerLoadFunc(async () => {
 	});
 });
 
-module.exports = { previewTextureByID };
+module.exports = { previewTextureByID, exportFiles };

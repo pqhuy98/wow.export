@@ -24,8 +24,11 @@
 	"dependencies": {
 		"acorn": "^8.0.4",
 		"adm-zip": "git+https://github.com/cthackers/adm-zip.git#ff17ae85000b62b9d159e2520564902724d26c17",
+		"axios": "^1.11.0",
 		"chalk": "^2.4.2",
+		"express": "^4.19.2",
 		"filesize": "^5.0.3",
+		"joi": "^17.13.3",
 		"pkg": "^4.4.0",
 		"rcedit": "^2.0.0",
 		"request": "^2.88.0",

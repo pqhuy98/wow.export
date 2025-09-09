@@ -631,6 +631,9 @@ const exportFilesWithSkins = async (models, isLocal = false, exportID = -1) => {
 
 	// Dispatch file manifest to RCP.
 	core.rcp.dispatchHook('HOOK_EXPORT_COMPLETE', manifest);
+
+	// Also return manifest for REST callers.
+	return manifest;
 };
 
 /**
@@ -775,3 +778,9 @@ core.registerLoadFunc(async () => {
 		await exportFiles(userSelection, false);
 	});
 });
+
+// Expose a REST-friendly export entrypoint that avoids RCP.
+module.exports = {
+	exportFilesWithSkins,
+	getAllSkinsForModel
+};

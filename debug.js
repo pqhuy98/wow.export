@@ -3,16 +3,19 @@ const path = require('path');
 const sass = require('sass');
 const childProcess = require('child_process');
 
-const nwPath = './bin/win-x64-debug/nw.exe';
+const isWindows = process.platform === 'win32';
+const debugTarget = isWindows ? 'win-x64-debug' : 'linux-x64-debug';
+const nwBinary = isWindows ? 'nw.exe' : 'nw';
+const nwPath = `./bin/${debugTarget}/${nwBinary}`;
 const srcDir = './src/';
 const appScss = './src/app.scss';
 
 (async () => {
-	// Check if nw.exe exists
+	// Check if NW.js debug binary exists
 	try {
 		await fs.promises.access(nwPath);
 	} catch (err) {
-		throw new Error('Could not find debug executable at %s, ensure you have run `node build win-x64-debug` first.', nwPath);
+		throw new Error(`Could not find debug executable at ${nwPath}, ensure you have run \`node build ${debugTarget}\` first.`);
 	}
 
 	// Locate all .scss files under /src/
@@ -40,7 +43,7 @@ const appScss = './src/app.scss';
 		});
 	});
 
-	// Launch nw.exe
+	// Launch NW.js
 	const nwProcess = childProcess.spawn(nwPath, { stdio: 'inherit' });
 
 	// When the spawned process is closed, exit the Node.js process as well

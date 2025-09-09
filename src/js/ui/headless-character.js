@@ -351,5 +351,5 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 }
 
 module.exports = {
-	exportCharacterModelHeadless
-}; 
+	exportCharacterModelHeadless,
+};
