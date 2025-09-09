@@ -4,6 +4,13 @@
 	License: MIT
  */
 
+const originalConsoleLog = console.log;
+console.__originalLog = originalConsoleLog;
+console.log = (...args) => {
+	originalConsoleLog(...args);
+	log.write(...args);
+};
+
 // BUILD_RELEASE will be set globally by Terser during bundling allowing us
 // to discern a production build. However, for debugging builds it will throw
 // a ReferenceError without the following check. Any code that only runs when

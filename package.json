@@ -1,5 +1,5 @@
 {
-	"name": "wow.export",
+	"name": "wow.export-huy-edition",
 	"description": "Export Toolkit for World of Warcraft",
 	"license": "MIT",
 	"version": "0.1.65",
@@ -8,7 +8,16 @@
 		"Marlamin <marlamin@marlamin.com> (https://marlamin.com/)"
 	],
 	"scripts": {
-		"build": "node build win-x64"
+		"build": "run-script-os",
+		"build:win32": "node build win-x64",
+		"build:linux": "node build linux-x64",
+		"build:debug": "run-script-os",
+		"build-debug:win32": "node build win-x64-debug",
+		"build-debug:linux": "node build linux-x64-debug",
+		"dev": "run-script-os",
+		"dev:win32": "node debug.js",
+		"dev:linux": "xvfb-run node debug.js",
+		"test": "node tests/index.js"
 	},
 	"repository": {
 		"type": "git",
@@ -40,6 +49,7 @@
 	},
 	"devDependencies": {
 		"eslint": "^6.8.0",
-		"eslint-plugin-vue": "^6.1.2"
+		"eslint-plugin-vue": "^6.1.2",
+		"run-script-os": "^1.1.6"
 	}
 }

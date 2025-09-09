@@ -46,7 +46,7 @@ class CASCLocal extends CASC {
 		// Filter known products.
 		this.builds = config.filter(entry => constants.PRODUCTS.some(e => e.product === entry.Product));
 
-		log.write('%o', this.builds);
+		// log.write('%o', this.builds);
 	}
 
 	/**
@@ -130,8 +130,8 @@ class CASCLocal extends CASC {
 		
 		this.cdnConfig = await this.getConfigFileWithRemoteFallback(this.build.CDNKey);
 
-		log.write('BuildConfig: %o', this.buildConfig);
-		log.write('CDNConfig: %o', this.cdnConfig);
+		// log.write('BuildConfig: %o', this.buildConfig);
+		// log.write('CDNConfig: %o', this.cdnConfig);
 	}
 
 	/** 

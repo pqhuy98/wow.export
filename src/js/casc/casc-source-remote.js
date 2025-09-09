@@ -357,8 +357,8 @@ class CASCRemote extends CASC {
 		this.cdnConfig = await this.getCDNConfig(this.build.CDNConfig);
 		this.buildConfig = await this.getCDNConfig(this.build.BuildConfig);
 
-		log.write('CDNConfig: %o', this.cdnConfig);
-		log.write('BuildConfig: %o', this.buildConfig);
+		// log.write('CDNConfig: %o', this.cdnConfig);
+		// log.write('BuildConfig: %o', this.buildConfig);
 	}
 
 	/**

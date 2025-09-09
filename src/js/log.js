@@ -89,9 +89,11 @@ const write = (...parameters) => {
 			throw new Error('ERR_LOG_OVERFLOW: The log pool has overflowed.');
 	}
 
-	// Mirror output to debugger.
-	if (!BUILD_RELEASE)
-		console.log(line);
+	// Mirror output to debugger without recursion (app.js stores original at console.__originalLog)
+	if (!BUILD_RELEASE) {
+		const mirror = (console && console.__originalLog) ? console.__originalLog : console.log;
+		mirror(line);
+	}
 };
 
 /**
