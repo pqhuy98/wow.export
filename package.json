@@ -11,7 +11,7 @@
 		"build": "run-script-os",
 		"build:win32": "node build win-x64",
 		"build:linux": "node build linux-x64",
-		"build:debug": "run-script-os",
+		"build-debug": "run-script-os",
 		"build-debug:win32": "node build win-x64-debug",
 		"build-debug:linux": "node build linux-x64-debug",
 		"dev": "run-script-os",
