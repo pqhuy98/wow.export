@@ -658,7 +658,8 @@ const deflateBuffer = util.promisify(zlib.deflate);
 		}
 
 		// Compile updater application.
-		if (build.updater) {
+		const buildUpdater = false
+		if (build.updater && buildUpdater) {
 			const updaterStart = Date.now();
 			const updaterOutput = path.join(buildDir, build.updater.out);
 
