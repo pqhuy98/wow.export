@@ -515,6 +515,7 @@ class M2Exporter {
 			json.addProperty('attachments', attachments);
 
 			await json.write(config.overwriteFiles, true);
+			fileManifest?.push({ type: 'BONE_META', fileDataID: this.fileDataID, file: json.out });
 		}
 
 		if (exportMeta) {

@@ -5,6 +5,8 @@
 */
 const http = require('http');
 const url = require('url');
+const fs = require('fs');
+const path = require('path');
 const core = require('../core');
 const log = require('../log');
 const listfile = require('../casc/listfile');
@@ -42,6 +44,8 @@ class RestServer {
 				return this.getFileByName(query, res);
 			case '/rest/getModelSkins':
 				return this.getModelSkins(query, res);
+			case '/rest/download':
+				return this.download(query, res);
 			default:
 				return this.sendJSON(res, 404, { id: 'ERR_NOT_FOUND' });
 		}
@@ -82,6 +86,48 @@ class RestServer {
 			buildConfig: casc.buildConfig,
 			buildName: casc.getBuildName(),
 			buildKey: casc.getBuildKey()
+		});
+	}
+
+	/**
+	 * Securely download a file under the configured export directory.
+	 * Only allows access within core.view.config.exportDirectory.
+	 * Expected query: { path: string } where path is a relative path under export dir.
+	 */
+	download(query, res) {
+		const exportDir = core.view?.config?.exportDirectory;
+		if (typeof exportDir !== 'string' || exportDir.length === 0)
+			return this.sendJSON(res, 503, { id: 'ERR_EXPORT_DIR_UNAVAILABLE' });
+
+		const requested = String(query.path || '');
+		if (!requested || requested.includes('\0'))
+			return this.sendJSON(res, 400, { id: 'ERR_INVALID_PARAMETERS', required: { path: 'string (relative)' } });
+
+		// Normalize and resolve to absolute path and ensure it stays within exportDir
+		const base = path.resolve(exportDir);
+		const abs = path.resolve(base, requested);
+		if (!abs.startsWith(base + path.sep) && abs !== base)
+			return this.sendJSON(res, 403, { id: 'ERR_FORBIDDEN' });
+
+		fs.stat(abs, (err, stat) => {
+			if (err || !stat.isFile())
+				return this.sendJSON(res, 404, { id: 'ERR_NOT_FOUND' });
+
+			const ext = path.extname(abs).toLowerCase();
+			const allowedExts = ['.png', '.json', '.obj', '.mtl', '.csv'];
+			if (!allowedExts.includes(ext)) {
+				return this.sendJSON(res, 400, { id: 'ERR_INVALID_FILE_TYPE', ext, allowedExts });
+			}
+			let contentType = 'application/octet-stream';
+			if (ext === '.png') contentType = 'image/png';
+			else if (ext === '.json') contentType = 'application/json; charset=utf-8';
+			else if (ext === '.obj' || ext === '.mtl' || ext === '.csv') contentType = 'text/plain; charset=utf-8';
+
+			res.statusCode = 200;
+			res.setHeader('Content-Type', contentType);
+			const stream = fs.createReadStream(abs);
+			stream.on('error', () => this.sendJSON(res, 500, { id: 'ERR_INTERNAL', message: 'Failed to read file' }));
+			stream.pipe(res);
 		});
 	}
 
