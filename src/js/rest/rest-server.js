@@ -76,7 +76,7 @@ class RestServer {
 
 	getCascInfo(res) {
 		const casc = core.view.casc;
-		if (!casc)
+		if (!casc || !casc.isLoaded)
 			return this.sendJSON(res, 503, { id: 'CASC_UNAVAILABLE' });
 
 		return this.sendJSON(res, 200, {

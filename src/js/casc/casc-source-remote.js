@@ -190,6 +190,7 @@ class CASCRemote extends CASC {
 		await this.loadTables();
 		await this.filterListfile();
 		await this.initializeComponents();
+		this.isLoaded = true;
 	}
 
 	/**

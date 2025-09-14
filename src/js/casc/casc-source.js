@@ -28,6 +28,7 @@ class CASC {
 		this.rootTypes = [];
 		this.rootEntries = new Map();
 		this.isRemote = isRemote;
+		this.isLoaded = false;
 
 		// Listen for configuration changes to cascLocale.
 		this.unhookConfig = core.view.$watch('config.cascLocale', (locale) => {
