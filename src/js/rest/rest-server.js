@@ -258,8 +258,16 @@ class RestServer {
 		}
 
 		const exportID = this.nextExportID();
-		const result = await modelsService.exportFilesWithSkins(models, false, exportID);
-		return this.sendJSON(res, 200, Object.assign({ id: 'EXPORT_RESULT' }, result));
+		try {
+			const result = await modelsService.exportFilesWithSkins(models, false, exportID);
+			const succeeded = Array.isArray(result?.succeeded) ? result.succeeded.length : 0;
+			const failed = Array.isArray(result?.failed) ? result.failed.length : 0;
+			if (succeeded === 0 && failed > 0)
+				return this.sendJSON(res, 422, Object.assign({ id: 'EXPORT_RESULT', reason: 'ALL_FAILED' }, result));
+			return this.sendJSON(res, 200, Object.assign({ id: 'EXPORT_RESULT', partial: failed > 0 }, result));
+		} catch (e) {
+			return this.sendJSON(res, 500, { id: 'ERR_INTERNAL', message: e.message });
+		}
 	}
 
 	async exportTextures(body, res) {
@@ -271,8 +279,16 @@ class RestServer {
 			return this.sendJSON(res, 400, { id: 'ERR_INVALID_PARAMETERS', required: { fileDataID: ['number', 'number[]'] } });
 
 		const exportID = this.nextExportID();
-		const result = await texturesService.exportFiles(files, false, exportID);
-		return this.sendJSON(res, 200, Object.assign({ id: 'EXPORT_RESULT' }, result));
+		try {
+			const result = await texturesService.exportFiles(files, false, exportID);
+			const succeeded = Array.isArray(result?.succeeded) ? result.succeeded.length : 0;
+			const failed = Array.isArray(result?.failed) ? result.failed.length : 0;
+			if (succeeded === 0 && failed > 0)
+				return this.sendJSON(res, 422, Object.assign({ id: 'EXPORT_RESULT', reason: 'ALL_FAILED' }, result));
+			return this.sendJSON(res, 200, Object.assign({ id: 'EXPORT_RESULT', partial: failed > 0 }, result));
+		} catch (e) {
+			return this.sendJSON(res, 500, { id: 'ERR_INTERNAL', message: e.message });
+		}
 	}
 
 	async exportCharacter(body, res) {
@@ -294,16 +310,20 @@ class RestServer {
 
 		const exportID = this.nextExportID();
 
-		const result = await charactersService.exportCharacterModelHeadless({ casc: core.view.casc, ...body });
+		try {
+			const result = await charactersService.exportCharacterModelHeadless({ casc: core.view.casc, ...body });
 
-		return this.sendJSON(res, 200, {
-			id: 'EXPORT_RESULT',
-			type: 'CHARACTERS',
-			exportID,
-			exportPath: result.exportPath,
-			fileName: result.fileName,
-			fileManifest: result.fileManifest
-		});
+			return this.sendJSON(res, 200, {
+				id: 'EXPORT_RESULT',
+				type: 'CHARACTERS',
+				exportID,
+				exportPath: result.exportPath,
+				fileName: result.fileName,
+				fileManifest: result.fileManifest
+			});
+		} catch (e) {
+			return this.sendJSON(res, 500, { id: 'ERR_INTERNAL', message: e.message });
+		}
 	}
 
 	// --------------- internals ---------------

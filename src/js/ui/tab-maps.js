@@ -24,6 +24,10 @@ let selectedWDT;
 const TILE_SIZE = constants.GAME.TILE_SIZE;
 const MAP_OFFSET = constants.GAME.MAP_OFFSET;
 
+// Cache for minimap tiles to avoid reloading/decoding when zoom level changes.
+// Keyed by "x:y" and stores the raw-sized canvas returned by BLP decoding.
+const mapTileCache = new Map();
+
 let gameObjectsDB2 = null;
 
 /**
@@ -39,6 +43,9 @@ const loadMap = async (mapID, mapDir) => {
 
 	selectedWDT = null;
 	core.view.mapViewerHasWorldModel = false;
+
+	// Invalidate any previously cached minimap tiles when switching maps.
+	mapTileCache.clear();
 
 	// Attempt to load the WDT for this map for chunk masking.
 	const wdtPath = util.format('world/maps/%s/%s.wdt', mapDirLower, mapDirLower);
@@ -84,27 +91,31 @@ const loadMapTile = async (x, y, size) => {
 		return false;
 
 	try {
-		// Attempt to load the requested tile from CASC.
-		const paddedX = x.toString().padStart(2, '0');
-		const paddedY = y.toString().padStart(2, '0');
-		const tilePath = util.format('world/minimaps/%s/map%s_%s.blp', selectedMapDir, paddedX, paddedY);
-		const data = await core.view.casc.getFileByName(tilePath, false, true);
-		const blp = new BLPFile(data);
+		const key = x + ':' + y;
+		let baseCanvas = mapTileCache.get(key);
 
-		// Draw the BLP onto a raw-sized canvas.
-		const canvas = blp.toCanvas(0b0111);
+		// Decode and cache the base canvas once per tile.
+		if (!baseCanvas) {
+			const paddedX = x.toString().padStart(2, '0');
+			const paddedY = y.toString().padStart(2, '0');
+			const tilePath = util.format('world/minimaps/%s/map%s_%s.blp', selectedMapDir, paddedX, paddedY);
+			const data = await core.view.casc.getFileByName(tilePath, false, true);
+			const blp = new BLPFile(data);
+			baseCanvas = blp.toCanvas(0b0111);
+			mapTileCache.set(key, baseCanvas);
+		}
 
-		// Scale the image down by copying the raw canvas onto a
-		// scaled canvas, and then returning the scaled image data.
-		const scale = size / blp.scaledWidth;
+		// Scale from the cached base canvas to the requested size.
+		const scale = size / baseCanvas.width;
 		const scaled = document.createElement('canvas');
 		scaled.width = size;
 		scaled.height = size;
 
 		const ctx = scaled.getContext('2d');
+		ctx.imageSmoothingEnabled = false;
 		ctx.scale(scale, scale);
-		ctx.drawImage(canvas, 0, 0);
-		
+		ctx.drawImage(baseCanvas, 0, 0);
+
 		return ctx.getImageData(0, 0, size, size);
 	} catch (e) {
 		// Map tile does not exist or cannot be read.

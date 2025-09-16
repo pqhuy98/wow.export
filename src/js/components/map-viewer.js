@@ -20,7 +20,9 @@ const state = {
 	offsetY: 0,
 	zoomFactor: 2,
 	tileQueue: [],
-	selectCache: new Set()
+	selectCache: new Set(),
+	// Track queued/in-flight requests to avoid duplicates and reprioritize safely.
+	pendingRequests: new Set()
 };
 
 Vue.component('map-viewer', {
@@ -128,17 +130,22 @@ Vue.component('map-viewer', {
 		initializeCache: function() {
 			state.tileQueue = [];
 			state.cache = new Array(MAP_SIZE_SQ);
+			state.pendingRequests.clear();
 		},
 
 		/**
 		 * Process the next tile in the loading queue.
 		 */
 		checkTileQueue: function() {
-			const tile = state.tileQueue.shift();
-			if (tile)
-				this.loadTile(tile);
-			else
+			if (state.tileQueue.length === 0) {
 				this.awaitingTile = false;
+				return;
+			}
+
+			// Prioritize by distance to hovered tile (or viewport center).
+			state.tileQueue.sort((a, b) => this.computePriority(a[0], a[1]) - this.computePriority(b[0], b[1]));
+			const tile = state.tileQueue.shift();
+			this.loadTile(tile);
 		},
 
 		/**
@@ -149,12 +156,39 @@ Vue.component('map-viewer', {
 		 * @param {number} tileSize 
 		 */
 		queueTile: function(x, y, index, tileSize) {
-			const node = [x, y, index, tileSize];
+			// Avoid duplicate requests for the same tile/size.
+			const key = index + ':' + tileSize;
+			if (state.pendingRequests.has(key))
+				return;
 
-			if (this.awaitingTile)
-				state.tileQueue.push(node);
-			else
+			// Skip if tile not visible anymore.
+			const viewport = this.$el;
+			const drawX = (x * tileSize) + state.offsetX;
+			const drawY = (y * tileSize) + state.offsetY;
+			if (drawX > (viewport.clientWidth + tileSize) || drawY > (viewport.clientHeight + tileSize) || drawX + tileSize < -tileSize || drawY + tileSize < -tileSize)
+				return;
+
+			state.pendingRequests.add(key);
+			const node = [x, y, index, tileSize];
+			state.tileQueue.push(node);
+
+			if (!this.awaitingTile)
 				this.loadTile(node);
+		},
+
+		/**
+		 * Compute priority based on Manhattan distance to hovered tile or viewport center.
+		 */
+		computePriority: function(x, y) {
+			if (this.hoverTile !== null) {
+				const hx = Math.floor(this.hoverTile / MAP_SIZE);
+				const hy = this.hoverTile % MAP_SIZE;
+				return Math.abs(x - hx) + Math.abs(y - hy);
+			} else {
+				const rect = this.$el.getBoundingClientRect();
+				const center = this.mapPositionFromClientPoint(rect.x + (rect.width / 2), rect.y + (rect.height / 2));
+				return Math.abs(x - center.tileX) + Math.abs(y - center.tileY);
+			}
 		},
 
 		/**
@@ -173,11 +207,21 @@ Vue.component('map-viewer', {
 			const cache = state.cache;
 
 			this.loader(x, y, tileSize).then(data => {
-				cache[index] = data;
+				if (data !== false && data) {
+					// Convert ImageData to an offscreen canvas and store with size metadata.
+					const canvas = document.createElement('canvas');
+					canvas.width = data.width;
+					canvas.height = data.height;
+					canvas.getContext('2d').putImageData(data, 0, 0);
+					cache[index] = { canvas, size: tileSize };
+				} else {
+					cache[index] = false;
+				}
 
-				if (data !== false)
-					this.render();
+				// Mark request complete for this tile/size
+				state.pendingRequests.delete(index + ':' + tileSize);
 
+				this.render();
 				this.checkTileQueue();
 			});
 		},
@@ -241,6 +285,7 @@ Vue.component('map-viewer', {
 
 			// Get local reference to the canvas context.
 			const ctx = this.context;
+			ctx.imageSmoothingEnabled = false;
 
 			// We need to use a local reference to the cache so that async callbacks
 			// for tile loading don't overwrite the most current cache if they resolve
@@ -280,9 +325,26 @@ Vue.component('map-viewer', {
 
 						// Add this tile to the loading queue.
 						this.queueTile(x, y, index, tileSize);
+					} else if (cached && cached.canvas) {
+						// Always render what's available to avoid blanking.
+						if (cached.size === tileSize)
+							ctx.drawImage(cached.canvas, drawX, drawY);
+						else {
+							ctx.drawImage(cached.canvas, drawX, drawY, tileSize, tileSize);
+							// If size mismatch, request an updated tile in the background.
+							if (cached.requestedSize !== tileSize) {
+								cached.requestedSize = tileSize;
+								this.queueTile(x, y, index, tileSize);
+							}
+						}
 					} else if (cached instanceof ImageData) {
-						// If the tile is renderable, render it.
-						ctx.putImageData(cached, drawX, drawY);
+						// Backward compatibility: convert ImageData cache into a canvas once.
+						const tmp = document.createElement('canvas');
+						tmp.width = cached.width;
+						tmp.height = cached.height;
+						tmp.getContext('2d').putImageData(cached, 0, 0);
+						cache[index] = { canvas: tmp };
+						ctx.drawImage(tmp, drawX, drawY, tileSize, tileSize);
 					}
 
 					// Draw the selection overlay if this tile is selected.
@@ -479,9 +541,6 @@ Vue.component('map-viewer', {
 		 */
 		setZoomFactor: function(factor) {
 			state.zoomFactor = factor;
-
-			// Invalidate the cache so that tiles are re-rendered.
-			this.initializeCache();
 		},
 
 		/**
@@ -517,18 +576,27 @@ Vue.component('map-viewer', {
 			const delta = event.deltaY > 0 ? 1 : -1;
 			const newZoom = Math.max(1, Math.min(this.zoom, state.zoomFactor + delta));
 
-			// Setting the new zoom factor even if it hasn't changed would have no effect due to
-			// the zoomFactor watcher being reactive, but we still check it here so that we only
-			// pan the map to the new zoom point if we're actually zooming.
+			// Anchor zoom at the mouse position: the world point under the cursor
+			// remains under the cursor after zooming.
 			if (newZoom !== state.zoomFactor) {
-				// Get the in-game position of the mouse cursor.
-				const point = this.mapPositionFromClientPoint(event.clientX, event.clientY);
+				const rect = this.$el.getBoundingClientRect();
+				const localX = event.clientX - rect.x;
+				const localY = event.clientY - rect.y;
 
-				// Set the new zoom factor. This will not trigger a re-render.
+				// Compute fractional tile coordinates under the cursor at current zoom.
+				const oldTileSize = Math.floor(this.tileSize / state.zoomFactor);
+				const fracTileX = (localX - state.offsetX) / oldTileSize;
+				const fracTileY = (localY - state.offsetY) / oldTileSize;
+
+				// Apply new zoom level.
 				this.setZoomFactor(newZoom);
 
-				// Pan the map to the cursor position.
-				this.setMapPosition(point.posX, point.posY);
+				// Recompute offsets so the same world point stays under the cursor.
+				const newTileSize = Math.floor(this.tileSize / state.zoomFactor);
+				state.offsetX = localX - (fracTileX * newTileSize);
+				state.offsetY = localY - (fracTileY * newTileSize);
+
+				this.render();
 			}
 		}
 	},
