@@ -105,7 +105,9 @@ const bindAlphaLayer = (layer) => {
 		data[j + 0] = data[j + 1] = data[j + 2] = data[j + 3] = layer[i];
 
 	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 64, 64, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
-	gl.generateMipmap(gl.TEXTURE_2D);
+	// Use non-mipmapped filtering to avoid cross-chunk bleed at borders
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
 	return texture;
 };
@@ -843,10 +845,31 @@ class ADTExporter {
 								const alphaLayers = texChunk.alphaLayers || [];
 								const alphaTextures = new Array(alphaLayers.length);
 
+								// If MCNK do_not_fix_alpha_map flag is not set, duplicate last
+								// row/column for 63x63 alpha maps to avoid seams (Noggit behavior).
+								const fixAlphaMap = !(rootAdt.chunks[chunkIndex].flags & (1 << 15));
+
 								for (let i = 1; i < alphaLayers.length; i++) {
 									gl.activeTexture(gl.TEXTURE3 + i);
 
-									const alphaTex = bindAlphaLayer(alphaLayers[i]);
+									let source = alphaLayers[i];
+									if (fixAlphaMap && source && source.length === 64 * 64) {
+										const fixed = new Uint8Array(64 * 64);
+										for (let j = 0; j < 64 * 64; j++) {
+											const isLastColumn = (j % 64) === 63;
+											const isLastRow = j >= 63 * 64;
+											if (isLastColumn && !isLastRow) {
+												fixed[j] = source[j - 1];
+											} else if (isLastRow) {
+												fixed[j] = source[j - 64];
+											} else {
+												fixed[j] = source[j];
+											}
+										}
+										source = fixed;
+									}
+
+									const alphaTex = bindAlphaLayer(source);
 									gl.bindTexture(gl.TEXTURE_2D, alphaTex);
 									
 									gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);

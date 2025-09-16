@@ -31,28 +31,16 @@ void main() {
 	vec2 tc2 = vTextureCoord * (8.0 / layerScale2);
 	vec2 tc3 = vTextureCoord * (8.0 / layerScale3);
 
-	float blendTex0 = texture2D(pt_blend1, mod(vTextureCoord, 1.0)).r;
-	float blendTex1 = texture2D(pt_blend2, mod(vTextureCoord, 1.0)).r;
-	float blendTex2 = texture2D(pt_blend3, mod(vTextureCoord, 1.0)).r;
+	float a0 = texture2D(pt_blend1, mod(vTextureCoord, 1.0)).r;
+	float a1 = texture2D(pt_blend2, mod(vTextureCoord, 1.0)).r;
+	float a2 = texture2D(pt_blend3, mod(vTextureCoord, 1.0)).r;
 
-	vec3 blendTex = vec3(blendTex0, blendTex1, blendTex2);
+	vec3 t0 = texture2D(pt_layer0, tc0).rgb;
+	vec3 t1 = texture2D(pt_layer1, tc1).rgb;
+	vec3 t2 = texture2D(pt_layer2, tc2).rgb;
+	vec3 t3 = texture2D(pt_layer3, tc3).rgb;
 
-	vec4 layerWeights = vec4(1.0 - clamp(dot(vec3(1.0), blendTex), 0.0, 1.0), blendTex);
-	vec4 layerPct = vec4(
-		layerWeights.x * (texture2D(pt_height0, tc0).a * pc_heightScale[0] + pc_heightOffset[0]),
-		layerWeights.y * (texture2D(pt_height1, tc1).a * pc_heightScale[1] + pc_heightOffset[1]),
-		layerWeights.z * (texture2D(pt_height2, tc2).a * pc_heightScale[2] + pc_heightOffset[2]),
-		layerWeights.w * (texture2D(pt_height3, tc3).a * pc_heightScale[3] + pc_heightOffset[3])
-	);
-
-	vec4 layerPctMax = vec4(max(max(layerPct.x, layerPct.y), max(layerPct.z, layerPct.w)));
-	layerPct = layerPct * (vec4(1.0) - clamp(layerPctMax - layerPct, 0.0, 1.0));
-	layerPct = layerPct / vec4(dot(vec4(1.0), layerPct));
-
-	vec4 weightedLayer_0 = texture2D(pt_layer0, tc0) * layerPct.x;
-	vec4 weightedLayer_1 = texture2D(pt_layer1, tc1) * layerPct.y;
-	vec4 weightedLayer_2 = texture2D(pt_layer2, tc2) * layerPct.z;
-	vec4 weightedLayer_3 = texture2D(pt_layer3, tc3) * layerPct.w;
-
-	gl_FragColor = vec4((weightedLayer_0.xyz + weightedLayer_1.xyz + weightedLayer_2.xyz + weightedLayer_3.xyz) * vVertexColor.rgb * 2.0, 1.0);
+	float base = 1.0 - (a0 + a1 + a2);
+	vec3 color = t0 * base + t1 * a0 + t2 * a1 + t3 * a2;
+	gl_FragColor = vec4(color * vVertexColor.rgb * 2.0, 1.0);
 }
