@@ -8,6 +8,7 @@ const url = require('url');
 const fs = require('fs');
 const path = require('path');
 const core = require('../core');
+const crypto = require('crypto');
 const log = require('../log');
 const listfile = require('../casc/listfile');
 const CASCLocal = require('../casc/casc-source-local');
@@ -22,6 +23,9 @@ class RestServer {
 		this.port = Number(process.env.WOWEXPORT_REST_PORT || 17752);
 		this._exportId = 1;
 		this._pendingCASC = null; // transient casc during loadCASCLocal/Remote before Build
+			// Response cache for export endpoints (10s TTL)
+			this._responseCache = new Map(); // key -> { ts, status, obj }
+			this._responseCacheTTL = 10 * 1000; // ms
 	}
 
 	get isRunning() {
@@ -245,8 +249,16 @@ class RestServer {
 	}
 
 	async exportModels(body, res) {
-		if (!core.view.casc)
-			return this.sendJSON(res, 409, { id: 'ERR_NO_CASC' });
+		const casc = core.view.casc;
+		const buildKey = casc?.getBuildKey ? casc.getBuildKey() : (casc?.buildKey || casc?.build || '');
+		const cacheKey = this._makeCacheKey('/rest/exportModels|' + String(buildKey), body);
+		const cached = this._getCachedResponse(cacheKey);
+		if (cached) return this.sendJSON(res, cached.status, cached.obj);
+		if (!casc) {
+			const status = 409; const obj = { id: 'ERR_NO_CASC' };
+			this._setCachedResponse(cacheKey, status, obj);
+			return this.sendJSON(res, status, obj);
+		}
 		let models = [];
 		if (Array.isArray(body?.models)) {
 			models = body.models;
@@ -254,75 +266,134 @@ class RestServer {
 			const ids = Array.isArray(body.fileDataID) ? body.fileDataID : [body.fileDataID];
 			models = ids.map(id => ({ fileDataID: id }));
 		} else {
-			return this.sendJSON(res, 400, { id: 'ERR_INVALID_PARAMETERS', required: { models: 'object[]' } });
+			const status = 400; const obj = { id: 'ERR_INVALID_PARAMETERS', required: { models: 'object[]' } };
+			this._setCachedResponse(cacheKey, status, obj);
+			return this.sendJSON(res, status, obj);
 		}
 
 		const exportID = this.nextExportID();
 		try {
-			const result = await modelsService.exportFilesWithSkins(models, false, exportID);
+			const result = await modelsService.exportFilesWithSkins(models, false, exportID, {
+				suppressRcpHook: true,
+				useExportPathsStream: false,
+				skipGlobalCacheInvalidation: true
+			});
 			const succeeded = Array.isArray(result?.succeeded) ? result.succeeded.length : 0;
 			const failed = Array.isArray(result?.failed) ? result.failed.length : 0;
-			if (succeeded === 0 && failed > 0)
-				return this.sendJSON(res, 422, Object.assign({ id: 'EXPORT_RESULT', reason: 'ALL_FAILED' }, result));
-			return this.sendJSON(res, 200, Object.assign({ id: 'EXPORT_RESULT', partial: failed > 0 }, result));
+			if (succeeded === 0 && failed > 0) {
+				const status = 422; const obj = Object.assign({ id: 'EXPORT_RESULT', reason: 'ALL_FAILED' }, result);
+				this._setCachedResponse(cacheKey, status, obj);
+				return this.sendJSON(res, status, obj);
+			}
+			const status = 200; const obj = Object.assign({ id: 'EXPORT_RESULT', partial: failed > 0 }, result);
+			this._setCachedResponse(cacheKey, status, obj);
+			return this.sendJSON(res, status, obj);
 		} catch (e) {
-			return this.sendJSON(res, 500, { id: 'ERR_INTERNAL', message: e.message });
+			const status = 500; const obj = { id: 'ERR_INTERNAL', message: e.message };
+			this._setCachedResponse(cacheKey, status, obj);
+			return this.sendJSON(res, status, obj);
 		}
 	}
 
 	async exportTextures(body, res) {
-		if (!core.view.casc)
-			return this.sendJSON(res, 409, { id: 'ERR_NO_CASC' });
+		const casc = core.view.casc;
+		const buildKey = casc?.getBuildKey ? casc.getBuildKey() : (casc?.buildKey || casc?.build || '');
+		const cacheKey = this._makeCacheKey('/rest/exportTextures|' + String(buildKey), body);
+		const cached = this._getCachedResponse(cacheKey);
+		if (cached) return this.sendJSON(res, cached.status, cached.obj);
+		if (!casc) {
+			const status = 409; const obj = { id: 'ERR_NO_CASC' };
+			this._setCachedResponse(cacheKey, status, obj);
+			return this.sendJSON(res, status, obj);
+		}
 		const ids = body?.fileDataID;
 		const files = Array.isArray(ids) ? ids : (ids !== undefined ? [ids] : null);
-		if (!files)
-			return this.sendJSON(res, 400, { id: 'ERR_INVALID_PARAMETERS', required: { fileDataID: ['number', 'number[]'] } });
+		if (!files) {
+			const status = 400; const obj = { id: 'ERR_INVALID_PARAMETERS', required: { fileDataID: ['number', 'number[]'] } };
+			this._setCachedResponse(cacheKey, status, obj);
+			return this.sendJSON(res, status, obj);
+		}
 
 		const exportID = this.nextExportID();
 		try {
-			const result = await texturesService.exportFiles(files, false, exportID);
+			const result = await texturesService.exportFiles(files, false, exportID, {
+				suppressRcpHook: true,
+				useExportPathsStream: false
+			});
 			const succeeded = Array.isArray(result?.succeeded) ? result.succeeded.length : 0;
 			const failed = Array.isArray(result?.failed) ? result.failed.length : 0;
-			if (succeeded === 0 && failed > 0)
-				return this.sendJSON(res, 422, Object.assign({ id: 'EXPORT_RESULT', reason: 'ALL_FAILED' }, result));
-			return this.sendJSON(res, 200, Object.assign({ id: 'EXPORT_RESULT', partial: failed > 0 }, result));
+			if (succeeded === 0 && failed > 0) {
+				const status = 422;
+				const obj = Object.assign({ id: 'EXPORT_RESULT', reason: 'ALL_FAILED' }, result);
+				this._setCachedResponse(cacheKey, status, obj);
+				return this.sendJSON(res, status, obj);
+			}
+			const status = 200;
+			const obj = Object.assign({ id: 'EXPORT_RESULT', partial: failed > 0 }, result);
+			this._setCachedResponse(cacheKey, status, obj);
+			return this.sendJSON(res, status, obj);
 		} catch (e) {
-			return this.sendJSON(res, 500, { id: 'ERR_INTERNAL', message: e.message });
+			const status = 500;
+			const obj = { id: 'ERR_INTERNAL', message: e.message };
+			this._setCachedResponse(cacheKey, status, obj);
+			return this.sendJSON(res, status, obj);
 		}
 	}
 
 	async exportCharacter(body, res) {
-		if (!core.view.casc)
-			return this.sendJSON(res, 409, { id: 'ERR_NO_CASC' });
+		const casc = core.view.casc;
+		const buildKey = casc?.getBuildKey ? casc.getBuildKey() : (casc?.buildKey || casc?.build || '');
+		const cacheKey = this._makeCacheKey('/rest/exportCharacter|' + String(buildKey), body);
+		const cached = this._getCachedResponse(cacheKey);
+		if (cached) return this.sendJSON(res, cached.status, cached.obj);
+		if (!casc) {
+			const status = 409; const obj = { id: 'ERR_NO_CASC' };
+			this._setCachedResponse(cacheKey, status, obj);
+			return this.sendJSON(res, status, obj);
+		}
 		const required = ['race', 'gender', 'customizations', 'geosetIds', 'hideGeosetIds', 'include_animations', 'include_base_clothing'];
 		for (const key of required) {
-			if (body?.[key] === undefined)
-				return this.sendJSON(res, 400, { id: 'ERR_INVALID_PARAMETERS', required: {
-					race: 'number',
-					gender: 'number',
-					customizations: 'object',
-					geosetIds: 'object',
-					hideGeosetIds: 'object',
-					include_animations: 'boolean',
-					include_base_clothing: 'boolean'
-				}});
+			if (body?.[key] === undefined) {
+				const status = 400;
+				const obj = {
+					id: 'ERR_INVALID_PARAMETERS',
+					required: {
+						race: 'number',
+						gender: 'number',
+						customizations: 'object',
+						geosetIds: 'object',
+						hideGeosetIds: 'object',
+						include_animations: 'boolean',
+						include_base_clothing: 'boolean'
+					}
+				};
+				this._setCachedResponse(cacheKey, status, obj);
+				return this.sendJSON(res, status, obj);
+			}
 		}
 
 		const exportID = this.nextExportID();
 
 		try {
-			const result = await charactersService.exportCharacterModelHeadless({ casc: core.view.casc, ...body });
+			const suffix = crypto.createHash('md5').update(JSON.stringify(body || {})).digest('hex').slice(0, 8);
+			const result = await charactersService.exportCharacterModelHeadless({ casc: core.view.casc, exportSuffix: suffix, ...body });
 
-			return this.sendJSON(res, 200, {
+			const status = 200;
+			const obj = {
 				id: 'EXPORT_RESULT',
 				type: 'CHARACTERS',
 				exportID,
 				exportPath: result.exportPath,
 				fileName: result.fileName,
 				fileManifest: result.fileManifest
-			});
+			};
+			this._setCachedResponse(cacheKey, status, obj);
+			return this.sendJSON(res, status, obj);
 		} catch (e) {
-			return this.sendJSON(res, 500, { id: 'ERR_INTERNAL', message: e.message });
+			const status = 500;
+			const obj = { id: 'ERR_INTERNAL', message: e.message };
+			this._setCachedResponse(cacheKey, status, obj);
+			return this.sendJSON(res, status, obj);
 		}
 	}
 
@@ -333,7 +404,7 @@ class RestServer {
 			throw new Error('REST server is already running.');
 
 		this.server = http.createServer(async (req, res) => {
-			try {
+		try {
 				const { pathname, query } = url.parse(req.url || '', true);
 				if (req.method === 'GET')
 					return await this.handleGet(pathname, query, res);
@@ -341,7 +412,6 @@ class RestServer {
 					const body = await this.readJSONBody(req);
 					return await this.handlePost(pathname, body, res);
 				}
-
 				this.sendJSON(res, 404, { id: 'ERR_NOT_FOUND' });
 			} catch (e) {
 				try { log.write('REST error: %s', e.message); } catch (_) {}
@@ -360,6 +430,40 @@ class RestServer {
 
 		this.server.close();
 		this.server = null;
+	}
+
+	// ---------------- cache helpers ----------------
+
+	_makeCacheKey(endpoint, body) {
+		const stableStringify = (value) => {
+			const seen = new WeakSet();
+			const stringify = (val) => {
+				if (val === null || typeof val !== 'object') return val;
+				if (seen.has(val)) return undefined;
+				seen.add(val);
+				if (Array.isArray(val)) return val.map(stringify);
+				const out = {};
+				for (const key of Object.keys(val).sort()) out[key] = stringify(val[key]);
+				return out;
+			};
+			return JSON.stringify(stringify(value));
+		};
+		return endpoint + ':' + stableStringify(body || {});
+	}
+
+	_getCachedResponse(key) {
+		const now = Date.now();
+		const entry = this._responseCache.get(key);
+		if (!entry) return null;
+		if (now - entry.ts > this._responseCacheTTL) {
+			this._responseCache.delete(key);
+			return null;
+		}
+		return entry;
+	}
+
+	_setCachedResponse(key, status, obj) {
+		this._responseCache.set(key, { ts: Date.now(), status, obj });
 	}
 
 	sendJSON(res, statusCode, obj) {

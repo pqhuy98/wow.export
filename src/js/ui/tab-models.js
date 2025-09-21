@@ -324,7 +324,7 @@ const getSkinTextureIDsByName = (fileDataID, skinName) => {
 };
 
 
-const exportFiles = async (files, isLocal = false, exportID = -1) => {
+const exportFiles = async (files, isLocal = false, exportID = -1, options = {}) => {
 	// Convert files to model format for exportFilesWithSkins
 	const models = files.map(file => {
 		if (typeof file === 'number') {
@@ -341,7 +341,7 @@ const exportFiles = async (files, isLocal = false, exportID = -1) => {
 		}
 	});
 
-	return exportFilesWithSkins(models, isLocal, exportID);
+	return exportFilesWithSkins(models, isLocal, exportID, options);
 };
 
 const buildGeosetMaskForSkin = async (exporter, skin) => {
@@ -382,9 +382,11 @@ const buildGeosetMaskForSkin = async (exporter, skin) => {
  * @param {boolean} isLocal Whether the files are local
  * @param {number} exportID Export ID for tracking
  */
-const exportFilesWithSkins = async (models, isLocal = false, exportID = -1) => {
-	const exportPaths = core.openLastExportStream();
-	const format = core.view.config.exportModelFormat;
+const exportFilesWithSkins = async (models, isLocal = false, exportID = -1, options = {}) => {
+	const exportOptions = options || {};
+	const configSnapshot = Object.freeze({ ...core.view.config });
+	const exportPaths = exportOptions.useExportPathsStream === false ? null : core.openLastExportStream();
+	const format = configSnapshot.exportModelFormat;
 	const manifest = { type: 'MODELS', exportID, succeeded: [], failed: [] };
 
 	if (format === 'PNG' || format === 'CLIPBOARD') {
@@ -490,6 +492,13 @@ const exportFilesWithSkins = async (models, isLocal = false, exportID = -1) => {
 				} else if (skinName) {
 					// Use skin name lookup
 					variantTextureIDs = getSkinTextureIDsByName(fileDataID, skinName);
+					selectedSkinName = skinName;
+				} else if (exportOptions.ignoreViewerState === true) {
+					// REST-safe default skin logic: choose first display with textures
+					const displays = getModelDisplays(fileDataID);
+					const display = displays.find(e => e.textures.length > 0)
+					variantTextureIDs = display?.textures ?? [];
+					selectedSkinName = display?.id ?? null;
 				} else {
 					// Use default skin logic
 					variantTextureIDs = getVariantTextureIDs(fileName);
@@ -498,7 +507,7 @@ const exportFilesWithSkins = async (models, isLocal = false, exportID = -1) => {
 				let exportPath;
 				if (isLocal) {
 					exportPath = fileName;
-				} else if (fileType === MODEL_TYPE_M2 && selectedSkinName !== null && fileName === activePath && format !== 'RAW') {
+				} else if (fileType === MODEL_TYPE_M2 && selectedSkinName !== null && format !== 'RAW') {
 					const baseFileName = path.basename(fileName, path.extname(fileName));
 					let skinnedName;
 
@@ -537,7 +546,7 @@ const exportFilesWithSkins = async (models, isLocal = false, exportID = -1) => {
 							const exporter = new M2Exporter(data, variantTextureIDs, fileDataID);
 
 							// Apply geoset masking using selected display.extraGeosets for non-active exports.
-							if (fileName == activePath) {
+							if (fileName == activePath && exportOptions.ignoreViewerState !== true) {
 								exporter.setGeosetMask(core.view.modelViewerGeosets);
 							} else if (skinName) {
 								const allSkins = getAllSkinsForModel(fileDataID);
@@ -550,7 +559,7 @@ const exportFilesWithSkins = async (models, isLocal = false, exportID = -1) => {
 							}
 
 							if (format === 'OBJ') {
-								await exporter.exportAsOBJ(exportPath, core.view.config.modelsExportCollision, helper, fileManifest);
+								await exporter.exportAsOBJ(exportPath, configSnapshot.modelsExportCollision, helper, fileManifest);
 								await exportPaths?.writeLine('M2_OBJ:' + exportPath);
 							} else if (format === 'GLTF') {
 								await exporter.exportAsGLTF(exportPath, helper, fileManifest);
@@ -568,7 +577,7 @@ const exportFilesWithSkins = async (models, isLocal = false, exportID = -1) => {
 							// 	exporter.setGeosetMask(core.view.modelViewerGeosets);
 
 							if (format === 'OBJ') {
-								await exporter.exportAsOBJ(exportPath, core.view.config.modelsExportCollision, helper, fileManifest);
+								await exporter.exportAsOBJ(exportPath, configSnapshot.modelsExportCollision, helper, fileManifest);
 								await exportPaths?.writeLine('M3_OBJ:' + exportPath);
 							} else if (format === 'GLTF') {
 								await exporter.exportAsGLTF(exportPath, helper, fileManifest);
@@ -600,7 +609,8 @@ const exportFilesWithSkins = async (models, isLocal = false, exportID = -1) => {
 								await exportPaths?.writeLine('WMO_GLTF:' + exportPath, fileManifest);
 							}
 
-							WMOExporter.clearCache();
+							if (exportOptions.skipGlobalCacheInvalidation !== true)
+								WMOExporter.clearCache();
 
 							// Abort if the export has been cancelled.
 							if (helper.isCancelled())
@@ -629,8 +639,9 @@ const exportFilesWithSkins = async (models, isLocal = false, exportID = -1) => {
 	// Write export information.
 	exportPaths?.close();
 
-	// Dispatch file manifest to RCP.
-	core.rcp.dispatchHook('HOOK_EXPORT_COMPLETE', manifest);
+	// Dispatch file manifest to RCP (optional for REST callers).
+	if (exportOptions.suppressRcpHook !== true)
+		core.rcp.dispatchHook('HOOK_EXPORT_COMPLETE', manifest);
 
 	// Also return manifest for REST callers.
 	return manifest;

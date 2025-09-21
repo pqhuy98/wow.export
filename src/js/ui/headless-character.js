@@ -32,7 +32,27 @@ async function getLookups() {
 
 	// TextureFileData.db2
 	const tfdDB = new WDCReader('DBFilesClient/TextureFileData.db2');
-	await tfdDB.parse();
+	const chrModelDB = new WDCReader('DBFilesClient/ChrModel.db2');
+	const chrCustElementDB = new WDCReader('DBFilesClient/ChrCustomizationElement.db2');
+	const chrCustMatDB = new WDCReader('DBFilesClient/ChrCustomizationMaterial.db2');
+	const chrCustChoiceDB = new WDCReader('DBFilesClient/ChrCustomizationChoice.db2');
+	const chrCustGeosetDB = new WDCReader('DBFilesClient/ChrCustomizationGeoset.db2');
+	const chrModelTextureLayerDB = new WDCReader('DBFilesClient/ChrModelTextureLayer.db2');
+	const charComponentTextureSectionDB = new WDCReader('DBFilesClient/CharComponentTextureSections.db2');
+	const chrModelMaterialDB = new WDCReader('DBFilesClient/ChrModelMaterial.db2');
+	const chrRaceXChrModelDB = new WDCReader('DBFilesClient/ChrRaceXChrModel.db2');
+	await Promise.all([
+		tfdDB.parse(),
+		chrModelDB.parse(),
+		chrCustElementDB.parse(),
+		chrCustGeosetDB.parse(),
+		chrCustMatDB.parse(),
+		chrModelTextureLayerDB.parse(),
+		chrModelMaterialDB.parse(),
+		chrRaceXChrModelDB.parse(),
+		chrCustChoiceDB.parse()
+	]);
+
 	const tfdMap = new Map();
 	for (const tfdRow of tfdDB.getAllRows().values()) {
 		if (tfdRow.UsageType != 0) continue;
@@ -40,8 +60,6 @@ async function getLookups() {
 	}
 
 	// ChrModel.db2
-	const chrModelDB = new WDCReader('DBFilesClient/ChrModel.db2');
-	await chrModelDB.parse();
 	for (const [chrModelID, chrModelRow] of chrModelDB.getAllRows()) {
 		const fileDataID = DBCreatures.getFileDataIDByDisplayID(chrModelRow.DisplayID);
 		chrModelIDToFileDataID.set(chrModelID, fileDataID);
@@ -49,8 +67,6 @@ async function getLookups() {
 	}
 
 	// ChrCustomizationElement.db2
-	const chrCustElementDB = new WDCReader('DBFilesClient/ChrCustomizationElement.db2');
-	await chrCustElementDB.parse();
 	for (const row of chrCustElementDB.getAllRows().values()) {
 		if (row.ChrCustomizationGeosetID != 0) {
 			if (!choiceToGeoset.has(row.ChrCustomizationChoiceID)) choiceToGeoset.set(row.ChrCustomizationChoiceID, []);
@@ -73,8 +89,6 @@ async function getLookups() {
 	}
 
 	// ChrCustomizationMaterial.db2
-	const chrCustMatDB = new WDCReader('DBFilesClient/ChrCustomizationMaterial.db2');
-	await chrCustMatDB.parse();
 	for (const row of chrCustMatDB.getAllRows().values()) {
 		chrCustMatMap.set(row.ID, {
 			ChrModelTextureTargetID: row.ChrModelTextureTargetID,
@@ -83,8 +97,6 @@ async function getLookups() {
 	}
 
 	// ChrCustomizationChoice.db2
-	const chrCustChoiceDB = new WDCReader('DBFilesClient/ChrCustomizationChoice.db2');
-	await chrCustChoiceDB.parse();
 	for (const row of chrCustChoiceDB.getAllRows().values()) {
 		if (row.ChrCustomizationGeosetID) {
 			if (!choiceToGeoset.has(row.ChrCustomizationChoiceID)) choiceToGeoset.set(row.ChrCustomizationChoiceID, []);
@@ -95,21 +107,16 @@ async function getLookups() {
 	}
 
 	// ChrCustomizationGeoset.db2
-	const chrCustGeosetDB = new WDCReader('DBFilesClient/ChrCustomizationGeoset.db2');
-	await chrCustGeosetDB.parse();
 	for (const [id, row] of chrCustGeosetDB.getAllRows()) {
 		const geoset = row.GeosetType.toString().padStart(2, '0') + row.GeosetID.toString().padStart(2, '0');
 		geosetMap.set(id, Number(geoset));
 	}
 
 	// ChrModelTextureLayer.db2
-	const chrModelTextureLayerDB = new WDCReader('DBFilesClient/ChrModelTextureLayer.db2');
-	await chrModelTextureLayerDB.parse();
 	for (const row of chrModelTextureLayerDB.getAllRows().values())
 		chrModelTextureLayerMap.set(row.CharComponentTextureLayoutsID + '-' + row.ChrModelTextureTargetID[0], row);
 
 	// CharComponentTextureSections.db2
-	const charComponentTextureSectionDB = new WDCReader('DBFilesClient/CharComponentTextureSections.db2');
 	await charComponentTextureSectionDB.parse();
 	for (const row of charComponentTextureSectionDB.getAllRows().values()) {
 		if (!charComponentTextureSectionMap.has(row.CharComponentTextureLayoutID))
@@ -118,14 +125,10 @@ async function getLookups() {
 	}
 
 	// ChrModelMaterial.db2
-	const chrModelMaterialDB = new WDCReader('DBFilesClient/ChrModelMaterial.db2');
-	await chrModelMaterialDB.parse();
 	for (const row of chrModelMaterialDB.getAllRows().values())
 		chrModelMaterialMap.set(row.CharComponentTextureLayoutsID + '-' + row.TextureType, row);
 
 	// ChrRaceXChrModel.db2
-	const chrRaceXChrModelDB = new WDCReader('DBFilesClient/ChrRaceXChrModel.db2');
-	await chrRaceXChrModelDB.parse();
 	for (const row of chrRaceXChrModelDB.getAllRows().values()) {
 		if (!chrRaceXChrModelMap.has(row.ChrRacesID))
 			chrRaceXChrModelMap.set(row.ChrRacesID, new Map());
@@ -151,34 +154,45 @@ async function getLookups() {
 	return lookupsCache;
 }
 
-// LRU cache for already-parsed M2 models. Keeps memory bounded.
-// We use a Map that is touched on every get() so iteration order reflects recency.
-// When the size exceeds MAX_CACHE the oldest (first) entry is evicted.
-const MAX_CACHE = 50;
-const m2ExporterCache = new Map();
+// Exporter pool keyed by fileDataID for concurrency-safe reuse.
+const MAX_POOL_PER_KEY = 2;
+const m2ExporterPool = new Map(); // fileDataID => M2Exporter[]
 
-function getCachedExporter(fileDataID) {
-	if (m2ExporterCache.has(fileDataID)) {
-		// Touch: move to the end (most-recent)
-		const value = m2ExporterCache.get(fileDataID);
-		m2ExporterCache.delete(fileDataID);
-		m2ExporterCache.set(fileDataID, value);
-		return value;
-	}
-	return null;
+async function createExporterFor(fileDataID) {
+	console.log('[headless] Creating new exporter for fileDataID', fileDataID);
+    const casc = core.view.casc;
+    const file = await casc.getFile(fileDataID);
+    const exporter = new M2Exporter(file, [], fileDataID);
+    await exporter.m2.load();
+    await exporter.m2.getSkin(0);
+    return exporter;
 }
 
-function addExporterToCache(fileDataID, exporter) {
-	if (m2ExporterCache.has(fileDataID)) m2ExporterCache.delete(fileDataID);
-	m2ExporterCache.set(fileDataID, exporter);
-	// Evict oldest if over limit
-	if (m2ExporterCache.size > MAX_CACHE) {
-		const oldestKey = m2ExporterCache.keys().next().value;
-		m2ExporterCache.delete(oldestKey);
-	}
+async function acquireExporter(fileDataID) {
+    const pool = m2ExporterPool.get(fileDataID);
+    if (pool && pool.length > 0) {
+			console.log('[headless] Reusing exporter for fileDataID', fileDataID);
+			return pool.pop();
+		}
+    return await createExporterFor(fileDataID);
 }
 
-async function exportCharacterModelHeadless({ race, gender, customizations, geosetIds, hideGeosetIds, excludeAnimationIds = [] }) {
+function releaseExporter(fileDataID, exporter) {
+    try {
+        exporter.setExcludedAnimIds([]);
+        exporter.resetURITextures();
+        exporter.setGeosetMask(undefined);
+    } catch (_) {}
+    let pool = m2ExporterPool.get(fileDataID);
+    if (!pool) {
+        pool = [];
+        m2ExporterPool.set(fileDataID, pool);
+    }
+    if (pool.length < MAX_POOL_PER_KEY)
+        pool.push(exporter);
+}
+
+async function exportCharacterModelHeadless({ race, gender, customizations, geosetIds, hideGeosetIds, excludeAnimationIds = [], exportSuffix = '' }) {
 	try {
 		await CharMaterialRenderer.init(); // Ensure shaders are loaded and compiled
 		console.log('[headless] Starting export for', { race, gender, customizations, geosetIds, hideGeosetIds });
@@ -205,14 +219,7 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 		if (!casc) throw new Error('CASC not loaded');
 		console.log('[headless] Loading model file for fileDataID', fileDataID);
 
-		let exporter = getCachedExporter(fileDataID);
-		if (!exporter) {
-			const file = await casc.getFile(fileDataID);
-			exporter = new M2Exporter(file, [], fileDataID);
-			addExporterToCache(fileDataID, exporter);
-			await exporter.m2.load();
-			await exporter.m2.getSkin(0);
-		}
+		let exporter = await acquireExporter(fileDataID);
 		exporter.setExcludedAnimIds(excludeAnimationIds);
 
 		const skin = exporter.m2.skins?.[0];
@@ -335,10 +342,17 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 		const helper = new ExportHelper(1, 'model');
 		helper.start();
 		const fileName = listfile.getByID(fileDataID);
-		const exportPath = ExportHelper.replaceExtension(ExportHelper.getExportPath(fileName), '.obj');
+		let exportPath = ExportHelper.replaceExtension(ExportHelper.getExportPath(fileName), '.obj');
+		if (exportSuffix) {
+			const dir = require('path').dirname(exportPath);
+			const base = require('path').basename(exportPath, require('path').extname(exportPath));
+			const ext = require('path').extname(exportPath);
+			exportPath = require('path').join(dir, base + '_' + exportSuffix + ext);
+		}
 		
 		const fileManifest = [];
 		await exporter.exportAsOBJ(exportPath, false, helper, fileManifest);
+		releaseExporter(fileDataID, exporter);
 		helper.mark(fileName, true);
 		helper.finish();
 		for (const [, chrMaterial] of chrMaterials)

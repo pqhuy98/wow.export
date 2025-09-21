@@ -120,19 +120,27 @@ class CharMaterialRenderer {
 	 * Disposes of all the things
 	 */
 	dispose() {
-		this.unbindAllTextures();
+		// Guard against double-dispose or missing WebGL extensions
+		const gl = this.gl;
+		if (!gl)
+			return;
+
+		try { this.unbindAllTextures(); } catch (_) {}
 
 		if (this.glShaderProg) {
-			this.gl.deleteProgram(this.glShaderProg);
+			try { gl.deleteProgram(this.glShaderProg); } catch (_) {}
 			this.glShaderProg = null;
 		}
 
-		this.clearCanvas();
-		if (!this.headless) 
-			overlay.remove(this.glCanvas);
+		try { this.clearCanvas(); } catch (_) {}
+		if (!this.headless && this.glCanvas) 
+			try { overlay.remove(this.glCanvas); } catch (_) {}
 		
-
-		this.gl.getExtension('WEBGL_lose_context').loseContext();
+		try {
+			const ext = gl.getExtension('WEBGL_lose_context');
+			if (ext && typeof ext.loseContext === 'function')
+				ext.loseContext();
+		} catch (_) {}
 		this.glCanvas = null;
 		this.gl = null;		
 	}
@@ -166,6 +174,8 @@ class CharMaterialRenderer {
 	 */
 	unbindAllTextures() {
 		// Unbind textures.
+		if (!this.gl)
+			return;
 		for (let i = 0, n = this.gl.getParameter(this.gl.MAX_TEXTURE_IMAGE_UNITS); i < n; i++) {
 			this.gl.activeTexture(this.gl.TEXTURE0 + i);
 			this.gl.bindTexture(this.gl.TEXTURE_2D, null);

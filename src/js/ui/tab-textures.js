@@ -267,8 +267,10 @@ const exportTextureAtlasRegions = async (fileDataID) => {
 	helper.finish();
 };
 
-const exportFiles = async (files, isLocal = false, exportID = -1) => {
-	const format = core.view.config.exportTextureFormat;
+const exportFiles = async (files, isLocal = false, exportID = -1, options = {}) => {
+	const exportOptions = options || {};
+	const configSnapshot = Object.freeze({ ...core.view.config });
+	const format = configSnapshot.exportTextureFormat;
 
 	if (format === 'CLIPBOARD') {
 		const { fileName, fileDataID } = getFileInfoPair(files[0]);
@@ -289,10 +291,10 @@ const exportFiles = async (files, isLocal = false, exportID = -1) => {
 	const helper = new ExportHelper(files.length, 'texture');
 	helper.start();
 
-	const exportPaths = core.openLastExportStream();
+	const exportPaths = exportOptions.useExportPathsStream === false ? null : core.openLastExportStream();
 
-	const overwriteFiles = isLocal || core.view.config.overwriteFiles;
-	const exportMeta = core.view.config.exportBLPMeta;
+	const overwriteFiles = isLocal || configSnapshot.overwriteFiles;
+	const exportMeta = configSnapshot.exportBLPMeta;
 
 	const manifest = { type: 'TEXTURES', exportID, succeeded: [], failed: [] };
 
@@ -317,8 +319,8 @@ const exportFiles = async (files, isLocal = false, exportID = -1) => {
 					await exportPaths?.writeLine('BLP:' + exportPath);
 				} else {
 					// Export as PNG.
-					const blp = new BLPFile(data);
-					await blp.saveToPNG(exportPath, core.view.config.exportChannelMask);
+				const blp = new BLPFile(data);
+				await blp.saveToPNG(exportPath, configSnapshot.exportChannelMask);
 					await exportPaths?.writeLine('PNG:' + exportPath);
 
 					if (exportMeta) {
@@ -353,8 +355,9 @@ const exportFiles = async (files, isLocal = false, exportID = -1) => {
 
 	helper.finish();
 
-	// Dispatch file manifest to RCP for legacy clients.
-	core.rcp.dispatchHook('HOOK_EXPORT_COMPLETE', manifest);
+	// Dispatch file manifest to RCP for legacy clients (optional for REST callers).
+	if (exportOptions.suppressRcpHook !== true)
+		core.rcp.dispatchHook('HOOK_EXPORT_COMPLETE', manifest);
 	return manifest;
 };
 
