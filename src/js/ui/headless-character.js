@@ -227,7 +227,7 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 
 		// Build initial geoset mask. This now mirrors the default logic used by the UI (see M2Renderer)
 		const geosetGroup = id => Math.floor(id / 100) * 100;
-		const defaultGeosets = new Set([0, 401, 501, 601, 702, 801, 901, 1001, 1101, 1201, 1301, 1400, 1501, 1600, 1700, 1801, 1901, 2001, 2101, 2201, 2301, 2400, 2500, 2601, 2700, 2801, 2900, 3000, 3100, 3202, 3301, 3401, 3500, 3600, 3700, 3801, 3900, 4001, 4101, 4201, 4301, 4401, 4501, 4601, 4701, 4801, 4901, 5001, 5101])
+		const defaultGeosets = new Set([0, 101, 201, 301, 401, 501, 601, 702, 801, 901, 1001, 1101, 1201, 1301, 1400, 1501, 1600, 1700, 1801, 1901, 2001, 2101, 2201, 2301, 2400, 2500, 2601, 2700, 2801, 2900, 3000, 3100, 3202, 3301, 3401, 3500, 3600, 3700, 3801, 3900, 4001, 4101, 4201, 4301, 4401, 4501, 4601, 4701, 4801, 4901, 5001, 5101])
 
 		const geosetMask = subMeshes.map(subMesh => {
 			const id = subMesh.submeshID;
@@ -255,7 +255,7 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 			const chrCustGeoIds = lookups.choiceToGeoset.get(Number(choiceID));
 			for(const chrCustGeoID of chrCustGeoIds || []) {
 				const geosetId = lookups.geosetMap.get(chrCustGeoID);
-				if (geosetId !== undefined) {
+				if (geosetId !== undefined && !hideGeosetIds.includes(geosetId)) {
 					console.log('turning on geoset', {geosetId, optionID, choiceID});
 					turnOnGeoset(geosetId, true);
 				}
