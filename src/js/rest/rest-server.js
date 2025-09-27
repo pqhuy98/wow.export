@@ -16,6 +16,7 @@ const CASCRemote = require('../casc/casc-source-remote');
 const modelsService = require('../ui/tab-models');
 const texturesService = require('../ui/tab-textures');
 const charactersService = require('../ui/headless-character');
+const WDCReader = require('../db/WDCReader');
 
 class RestServer {
 	constructor() {
@@ -50,6 +51,8 @@ class RestServer {
 				return this.getModelSkins(query, res);
 			case '/rest/download':
 				return this.download(query, res);
+			case '/rest/getMapList':
+				return this.getMapList(res);
 			default:
 				return this.sendJSON(res, 404, { id: 'ERR_NOT_FOUND' });
 		}
@@ -139,6 +142,28 @@ class RestServer {
 		if (typeof query.key === 'string')
 			return this.sendJSON(res, 200, { id: 'CONFIG_SINGLE', key: query.key, value: core.view.config[query.key] });
 		return this.sendJSON(res, 200, { id: 'CONFIG_FULL', config: core.view.config });
+	}
+
+	async getMapList(res) {
+		const casc = core.view.casc;
+		if (!casc || !casc.isLoaded)
+			return this.sendJSON(res, 409, { id: 'ERR_NO_CASC' });
+
+		try {
+			const table = new WDCReader('DBFilesClient/Map.db2');
+			await table.parse();
+			const maps = [];
+			for (const [id, entry] of table.getAllRows()) {
+				const dir = entry.Directory;
+				const wdtPath = path.posix.join('world/maps', dir, `${dir}.wdt`);
+				if (listfile.getByFilename(wdtPath)) {
+					maps.push({ id, name: entry.MapName_lang, dir, expansionID: entry.ExpansionID });
+				}
+			}
+			return this.sendJSON(res, 200, { id: 'MAP_LIST', maps });
+		} catch (e) {
+			return this.sendJSON(res, 500, { id: 'ERR_INTERNAL', message: e.message });
+		}
 	}
 
 	setConfig(body, res) {

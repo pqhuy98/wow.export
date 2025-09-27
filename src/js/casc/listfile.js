@@ -298,7 +298,7 @@ const getFilteredEntries = (search) => {
 	const isRegExp = search instanceof RegExp;
 
 	for (const [fileDataID, fileName] of idLookup.entries()) {
-		if (isRegExp ? fileName.match(search) : fileName.includes(search))
+		if (search === "" || isRegExp ? fileName.match(search) : fileName.includes(search))
 			results.push({ fileDataID, fileName });
 	}
 
