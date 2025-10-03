@@ -3,7 +3,8 @@
 	Authors: Kruithne <kruithne@gmail.com>
 	License: MIT
  */
-const util = require('util');
+const path = require('path');
+const fsp = require('fs').promises;
 const generics = require('../generics');
 const constants = require('../constants');
 const core = require('../core');
@@ -11,7 +12,6 @@ const log = require('../log');
 const BufferWrapper = require('../buffer');
 const ExportHelper = require('../casc/export-helper');
 
-const WDCReader = require('../db/WDCReader');
 const DBTextureFileData = require('../db/caches/DBTextureFileData');
 const DBModelFileData = require('../db/caches/DBModelFileData');
 
@@ -20,146 +20,359 @@ const idLookup = new Map();
 
 let loaded = false;
 
+let preloadedIdLookup = new Map();
+let preloadedNameLookup = new Map();
+let preloadTextures = [];
+let preloadSounds = [];
+let preloadVideos = [];
+let preloadText = [];
+let preloadModels = [];
+let isPreloaded = false;
+let preloadPromise = null;
+
 /**
- * Load listfile for the given build configuration key.
- * Returns the amount of file ID to filename mappings loaded.
- * @param {string} buildConfig
- * @param {BuildCache} cache
- * @param {Map} rootEntries
+ * Internal implementation of preload logic.
+ * @returns {Promise<boolean>} Returns true if preloading succeeded, false otherwise.
  */
-const loadListfile = async (buildConfig, cache, rootEntries) => {
-	log.write('Loading listfile for build %s', buildConfig);
+const _doPreload = async () => {
+	try {
+		log.write('Preloading master listfile...');
 
-	let url = String(core.view.config.listfileURL);
-	if (typeof url !== 'string')
-		throw new Error('Missing/malformed listfileURL in configuration!');
+		let url = String(core.view.config.listfileURL);
+		if (typeof url !== 'string')
+			throw new Error('Missing/malformed listfileURL in configuration!');
 
-	// Replace optional buildID wildcard.
-	if (url.includes('%s'))
-		url = util.format(url, buildConfig);
+		// Ensure listfile cache directory exists
+		await fsp.mkdir(constants.CACHE.DIR_LISTFILE, { recursive: true });
 
-	idLookup.clear();
-	nameLookup.clear();
+		const cacheFile = path.join(constants.CACHE.DIR_LISTFILE, constants.CACHE.LISTFILE_DATA);
 
-	let data;
-	if (url.startsWith('http')) {
-		// Listfile URL is http, check for cache/updates.
-		let requireDownload = false;
-		const cached = await cache.getFile(constants.CACHE.BUILD_LISTFILE);
+		preloadedIdLookup.clear();
+		preloadedNameLookup.clear();
+		isPreloaded = false;
 
-		if (cache.meta.lastListfileUpdate) {
-			let ttl = Number(core.view.config.listfileCacheRefresh) || 0;
-			ttl *= 24 * 60 * 60 * 1000; // Reduce from days to milliseconds.
+		let data;
+		if (url.startsWith('http')) {
+			// Listfile URL is http, check for cache/updates
+			let requireDownload = false;
+			let cached = null;
+			let lastModified = 0;
 
-			if (ttl === 0 || (Date.now() - cache.meta.lastListfileUpdate) > ttl) {
-				// Local cache file needs updating (or has invalid manifest entry).
-				log.write('Cached listfile for %s is out-of-date (> %d).', buildConfig, ttl);
-				requireDownload = true;
-			} else {
-				// Ensure that the local cache file *actually* exists before relying on it.
-				if (cached === null) {
-					log.write('Listfile for %s is missing despite meta entry. User tamper?', buildConfig);
+			// Try to load existing cached data and get its modification time
+			try {
+				cached = await BufferWrapper.readFile(cacheFile);
+				const stats = await fsp.stat(cacheFile);
+				lastModified = stats.mtime.getTime();
+			} catch (e) {
+				// No cached file
+			}
+
+			if (lastModified > 0) {
+				let ttl = Number(core.view.config.listfileCacheRefresh) || 0;
+				ttl *= 24 * 60 * 60 * 1000; // Reduce from days to milliseconds.
+
+				if (ttl === 0 || (Date.now() - lastModified) > ttl) {
+					// Local cache file needs updating.
+					log.write('Cached listfile is out-of-date (> %d).', ttl);
 					requireDownload = true;
 				} else {
-					log.write('Listfile for %s is cached locally.', buildConfig);
+					// Ensure that the local cache file *actually* exists before relying on it.
+					if (cached === null) {
+						log.write('Listfile is missing despite file stats. User tamper?');
+						requireDownload = true;
+					} else {
+						log.write('Listfile is cached locally.');
+					}
 				}
+			} else {
+				// This listfile has never been cached.
+				requireDownload = true;
+				log.write('Listfile is not cached, downloading fresh.');
 			}
-		} else {
-			// This listfile has never been updated.
-			requireDownload = true;
-			log.write('Listfile for %s is not cached, downloading fresh.', buildConfig);
-		}
 
-		if (requireDownload) {
-			try {
-				const fallback_url = String(core.view.config.listfileFallbackURL);
-				data = await generics.downloadFile([url, fallback_url]);
+			if (requireDownload) {
+				try {
+					let fallback_url = String(core.view.config.listfileFallbackURL);
+					// Remove %s placeholder since we don't use buildConfig for master listfile
+					fallback_url = fallback_url.replace('%s', '');
+					
+					data = await generics.downloadFile([url, fallback_url]);
 
-				cache.storeFile(constants.CACHE.BUILD_LISTFILE, data);
+					// Store the downloaded data (file modification time will be set automatically)
+					await fsp.writeFile(cacheFile, data.raw);
+				} catch (e) {
+					if (cached === null) {
+						log.write('Failed to download listfile during preload, no cached version for fallback: %s', e.message);
+						return false;
+					}
 
-				cache.meta.lastListfileUpdate = Date.now();
-				cache.saveManifest();
-			} catch (e) {
-				if (cached === null)
-					throw new Error('Failed to download listfile, no cached version for fallback');
-
+					log.write('Failed to download listfile during preload, using cached version: %s', e.message);
+					data = cached;
+				}
+			} else {
 				data = cached;
 			}
 		} else {
-			data = cached;
-		}
-	} else {
-		// User has configured a local listfile location.
-		log.write('Loading user-defined local listfile: %s', url);
-		data = await BufferWrapper.readFile(url);
-	}
-
-	// Parse all lines in the listfile.
-	// Example: 53187;sound/music/citymusic/darnassus/druid grove.mp3
-	const lines = data.readLines();
-	for (const line of lines) {
-		if (line.length === 0)
-			continue;
-
-		const tokens = line.split(';');
-
-		if (tokens.length !== 2) {
-			log.write('Invalid listfile line (token count): %s', line);
-			return;
+			// User has configured a local listfile location
+			log.write('Preloading user-defined local listfile: %s', url);
+			data = await BufferWrapper.readFile(url);
 		}
 
-		const fileDataID = Number(tokens[0]);
-		if (isNaN(fileDataID)) {
-			log.write('Invalid listfile line (non-numerical ID): %s', line);
-			return;
-		}
+		const lines = data.readLines();
+		log.write('Processing %d listfile lines in chunks...', lines.length);
+		
+		await generics.batchWork('listfile parsing', lines, (line, index) => {
+			if (line.length === 0)
+				return;
 
-		if (rootEntries.has(fileDataID))
-		{
+			const tokens = line.split(';');
+			if (tokens.length !== 2) {
+				log.write('Invalid listfile line (token count): %s', line);
+				return;
+			}
+
+			const fileDataID = Number(tokens[0]);
+			if (isNaN(fileDataID)) {
+				log.write('Invalid listfile line (non-numerical ID): %s', line);
+				return;
+			}
+
 			const fileName = tokens[1].toLowerCase();
-			idLookup.set(fileDataID, fileName);
-			nameLookup.set(fileName, fileDataID);
+			preloadedIdLookup.set(fileDataID, fileName);
+			preloadedNameLookup.set(fileName, fileDataID);
+		}, 50000);
+
+		if (preloadedIdLookup.size === 0) {
+			log.write('No entries found in preloaded listfile');
+			return false;
 		}
-	}
 
-	if (idLookup.size === 0) {
-		log.write('Invalid listfile count (no entries)');
-		return;
-	}
+		// Pre-filter into different extension types (unformatted fileDataID arrays)
+		// preloadTextures = await getFileDataIDsByExtension('.blp', 'filtering textures');
+		// preloadSounds = await getFileDataIDsByExtension(['.ogg', '.mp3', '.unk_sound'], 'filtering sounds');
+		// preloadVideos = await getFileDataIDsByExtension('.avi', 'filtering videos');
+		// preloadText = await getFileDataIDsByExtension(['.txt', '.lua', '.xml', '.sbt', '.wtf', '.htm', '.toc', '.xsd'], 'filtering text files');
+		// preloadModels = await getPreloadedModelFormats();
 
-	loaded = true;
-	log.write('%d listfile entries loaded', idLookup.size);
-	return idLookup.size;
-}
+		// This is 2x faster than the original implementation.
+		for (const [fileDataID, fileName] of preloadedIdLookup.entries()) {
+			const ext = path.extname(fileName);
+			switch (ext) {
+				case '.blp':
+					preloadTextures.push(fileDataID);
+					break;
+				case '.ogg':
+				case '.mp3':
+				case '.unk_sound':
+					preloadSounds.push(fileDataID);
+					break;
+				case '.avi':
+					preloadVideos.push(fileDataID);
+					break;
+				case '.txt':
+				case '.lua':
+				case '.xml':
+				case '.sbt':
+				case '.wtf':
+				case '.htm':
+				case '.toc':
+				case '.xsd':
+					preloadText.push(fileDataID);
+					break;
+				case '.m3':
+					if (core.view.config.modelsShowM3)
+						preloadModels.push(fileDataID);
+					break;
+				case '.m2':
+					if (core.view.config.modelsShowM2)
+						preloadModels.push(fileDataID);
+					break;
+				case '.wmo':
+					if (core.view.config.modelsShowWMO && !fileName.match(constants.LISTFILE_MODEL_FILTER))
+						preloadModels.push(fileDataID);
+					break;
+				default:
+					break;
+			}
+		}
+		
+		isPreloaded = true;
+		log.write('Preloaded %d listfile entries and filtered by extensions', preloadedIdLookup.size);
+		return true;
+	} catch (e) {
+		log.write('Error during listfile preload: %s', e.message);
+		isPreloaded = false;
+		return false;
+	}
+};
 
 /**
- * Load unknown files from TextureFileData/ModelFileData.
- * Must be called after DBTextureFileData/DBModelFileData have loaded.
+ * Preload the master listfile and filter it into different extension types.
+ * This can be called early in the application startup before any user selection.
+ * Multiple calls to this function will return the same promise.
+ * @returns {Promise<boolean>} Returns true if preloading succeeded, false otherwise.
  */
-const loadUnknowns = async () => {
-	const unkBlp = await loadIDTable(DBTextureFileData.getFileDataIDs(), '.blp');
-	const unkM2 = await loadIDTable(DBModelFileData.getFileDataIDs(), '.m2');
+const preload = async () => {
+	if (preloadPromise)
+		return preloadPromise;
+	
+	if (isPreloaded)
+		return true;
+	
+	preloadPromise = _doPreload();
+	return preloadPromise;
+};
 
-	log.write('Added %d unknown BLP textures from TextureFileData to listfile', unkBlp);
-	log.write('Added %d unknown M2 models from ModelFileData to listfile', unkM2);
+/**
+ * Ensure listfile is preloaded and ready for use.
+ * This should be called during the loading process before accessing listfile data.
+ * @returns {Promise<boolean>} Returns true if preparation succeeded, false otherwise.
+ */
+const prepareListfile = async () => {
+	if (isPreloaded)
+		return true;
 	
-	// Load unknown sounds from SoundKitEntry table.
-	const soundKitEntries = new WDCReader('DBFilesClient/SoundKitEntry.db2');
-	await soundKitEntries.parse();
+	if (preloadPromise) {
+		log.write('Waiting for listfile preload to complete...');
+		return await preloadPromise;
+	}
 	
-	let unknownCount = 0;
-	for (const entry of soundKitEntries.getAllRows().values()) {
-		if (!idLookup.has(entry.FileDataID)) {
-			// List unknown sound files using the .unk_sound extension. Files will be
-			// dynamically checked upon export and given the correct extension.
-			const fileName = 'unknown/' + entry.FileDataID + '.unk_sound';
-			idLookup.set(entry.FileDataID, fileName);
-			nameLookup.set(fileName, entry.FileDataID);
-			unknownCount++;
+	log.write('Starting listfile preload...');
+	return await preload();
+};
+
+/**
+ * Helper function to get fileDataIDs by extension from preloaded data.
+ * @param {string|Array} exts 
+ * @param {string} name - Name for logging purposes
+ * @returns {Promise<Array>} Array of fileDataIDs (unformatted)
+ */
+const getFileDataIDsByExtension = async (exts, name) => {
+	if (!Array.isArray(exts))
+		exts = [exts];
+
+	const entries = [];
+	const entriesArray = Array.from(preloadedIdLookup.entries());
+
+	await generics.batchWork(name, entriesArray, ([fileDataID, filename]) => {
+		for (const ext of exts) {
+			if (Array.isArray(ext)) {
+				if (filename.endsWith(ext[0]) && !filename.match(ext[1])) {
+					entries.push(fileDataID);
+					break;
+				}
+			} else {
+				if (filename.endsWith(ext)) {
+					entries.push(fileDataID);
+					break;
+				}
+			}
 		}
+	}, 1000);
+
+	return entries;
+};
+
+/**
+ * Helper function to get model formats from preloaded data.
+ * @returns {Promise<Array>} Array of fileDataIDs (unformatted)
+ */
+const getPreloadedModelFormats = async () => {
+	// Filters for the model viewer depending on user settings.
+	const modelExt = [];
+	if (core.view.config.modelsShowM3)
+		modelExt.push('.m3');
+
+	if (core.view.config.modelsShowM2)
+		modelExt.push('.m2');
+	
+	if (core.view.config.modelsShowWMO)
+		modelExt.push(['.wmo', constants.LISTFILE_MODEL_FILTER]);
+
+	return await getFileDataIDsByExtension(modelExt, 'filtering models');
+};
+
+/**
+ * Apply preloaded listfile data filtered by rootEntries.
+ * This allows using the preloaded data instead of re-downloading and parsing.
+ * @param {Map} rootEntries Map of root entries to filter by
+ * @returns {number} Number of entries applied, or 0 if preload not available/failed
+ */
+const applyPreload = (rootEntries) => {
+	if (!isPreloaded) {
+		log.write('No preloaded listfile available, falling back to normal loading');
+		return 0;
 	}
 
-	log.write('Added %d unknown sound files from SoundKitEntry to listfile', unknownCount);
+	try {
+		log.write('Applying preloaded listfile data...');
+		
+		// Clear current data
+		idLookup.clear();
+		nameLookup.clear();
+
+		// Apply preloaded entries filtered by rootEntries
+		let appliedCount = 0;
+		for (const [fileDataID, fileName] of preloadedIdLookup.entries()) {
+			if (rootEntries.has(fileDataID)) {
+				idLookup.set(fileDataID, fileName);
+				nameLookup.set(fileName, fileDataID);
+				appliedCount++;
+			}
+		}
+
+		if (appliedCount === 0) {
+			log.write('No preloaded entries matched rootEntries');
+			return 0;
+		}
+
+		const filterAndFormat = (fileDataIDs) => {
+			const result = formatEntries(fileDataIDs.filter(id => rootEntries.has(id)));
+			fileDataIDs.length = 0; // Free memory
+			return result;
+		};
+
+		core.view.listfileTextures = filterAndFormat(preloadTextures);
+		core.view.listfileSounds = filterAndFormat(preloadSounds);
+		core.view.listfileVideos = filterAndFormat(preloadVideos);
+		core.view.listfileText = filterAndFormat(preloadText);
+		core.view.listfileModels = filterAndFormat(preloadModels);
+
+		loaded = true;
+		log.write('Applied %d preloaded listfile entries', appliedCount);
+	} catch (e) {
+		log.write('Error applying preloaded listfile: %s', e.message);
+	}
+};
+
+
+/**
+ * Load unknown texture files from TextureFileData.
+ * Called from texture tab loading.
+ */
+const loadUnknownTextures = async () => {
+	await DBTextureFileData.ensureInitialized();
+	const unkBlp = await loadIDTable(DBTextureFileData.getFileDataIDs(), '.blp');
+	log.write('Added %d unknown BLP textures from TextureFileData to listfile', unkBlp);
+	return unkBlp;
+};
+
+/**
+ * Load unknown model files from ModelFileData.
+ * Called during CASC initialization if unknown files are enabled.
+ */
+const loadUnknownModels = async () => {
+	const unkM2 = await loadIDTable(DBModelFileData.getFileDataIDs(), '.m2');
+	log.write('Added %d unknown M2 models from ModelFileData to listfile', unkM2);
+	return unkM2;
+};
+
+/**
+ * Load unknown files from ModelFileData only.
+ * TextureFileData unknown files are now loaded in texture tab.
+ */
+const loadUnknowns = async () => {
+	await loadUnknownModels();
 };
 
 /**
@@ -334,9 +547,22 @@ const isLoaded = () => {
 	return loaded;
 };
 
+/**
+ * Adds an entry to the listfile.
+ * @returns {void}
+ */
+const addEntry = (fileDataID, fileName) => {
+	idLookup.set(fileDataID, fileName);
+	nameLookup.set(fileName, fileDataID);
+};
+
 module.exports = {
-	loadListfile,
 	loadUnknowns,
+	loadUnknownTextures,
+	loadUnknownModels,
+	preload,
+	prepareListfile,
+	applyPreload,
 	getByID,
 	getByFilename,
 	getFullListfile,
@@ -347,5 +573,6 @@ module.exports = {
 	formatEntries,
 	formatUnknownFile,
 	ingestIdentifiedFiles,
-	isLoaded
+	isLoaded,
+	addEntry
 };

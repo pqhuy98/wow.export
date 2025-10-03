@@ -7,29 +7,53 @@ on:
 jobs: 
   build:
     name: Build and publish
-    runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          - platform: win-x64
+            os: windows-latest
+          - platform: linux-x64
+            os: ubuntu-latest
+          - platform: osx-x64
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-      - name: Set up node
-        uses: actions/setup-node@v3
+      - name: Set up bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: 16
-          cache: npm
-      - name: npm install
-        run: npm ci
-      - name: Compile wow.export win-x64
-        run: mkdir bin\win-x64 && node build.js win-x64
+          bun-version: latest
+      - name: bun install
+        run: bun install
+      - name: Compile wow.export ${{ matrix.platform }}
+        run: bun build.js ${{ matrix.platform }}
       - name: Publish
-        env:
-          SFTP_HOST: ${{ secrets.SFTP_HOST }}
-          SFTP_PORT: ${{ secrets.SFTP_PORT }}
-          SFTP_USER: ${{ secrets.SFTP_USER }}
-          SFTP_PASS: ${{ secrets.SFTP_PASS }}
-          SFTP_REMOTE_UPDATE_DIR: ${{ secrets.SFTP_REMOTE_UPDATE_DIR }}
-          SFTP_REMOTE_PACKAGE_DIR: ${{ secrets.SFTP_REMOTE_PACKAGE_DIR }}
-        run: node publish.js win-x64
-      - name: Upload release
-        uses: softprops/action-gh-release@v0.1.13
+        run: bun publish.js ${{ matrix.platform }}
+      - name: Upload update file
+        id: upload-update
+        uses: svenstaro/upload-release-action@v2
         with:
-          files: bin\packages\wow.export-*.zip
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: publish/${{ matrix.platform }}/update
+          asset_name: update-${{ matrix.platform }}
+          tag: ${{ github.ref }}
+      - name: Upload update.json file
+        id: upload-manifest
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: publish/${{ matrix.platform }}/update.json
+          asset_name: update-${{ matrix.platform }}.json
+          tag: ${{ github.ref }}
+      - name: Upload package
+        id: upload-package
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: publish/${{ matrix.platform }}/wow-export-${{ matrix.platform }}-*.*
+          file_glob: true
+          tag: ${{ github.ref }}
+      - name: Trigger update webhook
+        shell: bash
+        run: 'bun trigger_release.js ${{ secrets.WOW_EXPORT_V2_UPDATE_KEY }} ${{ matrix.platform }} "${{ steps.upload-update.outputs.browser_download_url }}" "${{ steps.upload-manifest.outputs.browser_download_url }}" "${{ steps.upload-package.outputs.browser_download_url }}"'

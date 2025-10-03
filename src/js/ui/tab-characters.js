@@ -10,6 +10,7 @@ const generics = require('../generics');
 const CharMaterialRenderer = require('../3D/renderers/CharMaterialRenderer');
 const M2Renderer = require('../3D/renderers/M2Renderer');
 const M2Exporter = require('../3D/exporters/M2Exporter');
+const CameraBounding = require('../3D/camera/CameraBounding');
 const WDCReader = require('../db/WDCReader');
 const ExportHelper = require('../casc/export-helper');
 const listfile = require('../casc/listfile');
@@ -85,8 +86,9 @@ function disposeSkinnedModels() {
 }
 
 async function uploadRenderOverrideTextures() {
-	if (!activeRenderer) return;
-	
+	if (!activeRenderer)
+		return;
+
 	for (const [chrModelTextureTarget, chrMaterial] of chrMaterials) {
 		await chrMaterial.update();
 		await activeRenderer.overrideTextureTypeWithCanvas(chrModelTextureTarget,  chrMaterial.getCanvas());
@@ -386,7 +388,7 @@ async function previewModel(fileDataID) {
 
 		await activeRenderer.load();
 		//textureShaderMap = activeRenderer.shaderMap;
-		updateCameraBounding();
+		CameraBounding.fitObjectInView(renderGroup, camera, core.view.chrModelViewerContext.controls);
 
 		activeModel = fileDataID;
 
@@ -406,34 +408,6 @@ async function previewModel(fileDataID) {
 	core.view.isBusy--;
 }
 
-/** Update the camera to match render group bounding. */
-function updateCameraBounding() {
-	// Get the bounding box for the model.
-	const boundingBox = new THREE.Box3();
-	boundingBox.setFromObject(renderGroup);
-
-	// Calculate center point and size from bounding box.
-	const center = boundingBox.getCenter(new THREE.Vector3());
-	const size = boundingBox.getSize(new THREE.Vector3());
-
-	const maxDim = Math.max(size.x, size.y, size.z);
-	const fov = camera.fov * (Math.PI / 180);
-	const cameraZ = (Math.abs(maxDim / 4 * Math.tan(fov * 2))) * 6;
-
-	const heightOffset = maxDim * 0.7;
-	camera.position.set(center.x, heightOffset, cameraZ);
-
-	const minZ = boundingBox.min.z;
-	const cameraToFarEdge = (minZ < 0) ? -minZ + cameraZ : cameraZ - minZ;
-
-	camera.updateProjectionMatrix();
-
-	const controls = core.view.modelViewerContext.controls;
-	if (controls) {
-		controls.target = center;
-		controls.maxDistance = cameraToFarEdge * 2;
-	}
-}
 
 async function importCharacter() {
 	core.view.isBusy++;
@@ -689,7 +663,7 @@ core.events.once('screen-tab-characters', async () => {
 	const state = core.view;
 
 	// Initialize a loading screen.
-	const progress = core.createProgress(15);
+	const progress = core.createProgress(16);
 	state.setScreen('loading');
 	state.isBusy++;
 
@@ -721,6 +695,9 @@ core.events.once('screen-tab-characters', async () => {
 	await progress.step('Loading character models..');
 	const chrModelDB = new WDCReader('DBFilesClient/ChrModel.db2');
 	await chrModelDB.parse();
+
+	await progress.step('Loading creature data...');
+	await DBCreatures.initializeCreatureData();
 
 	await progress.step('Loading character customization choices...');
 	chrCustChoiceDB = new WDCReader('DBFilesClient/ChrCustomizationChoice.db2');
@@ -883,7 +860,7 @@ core.events.once('screen-tab-characters', async () => {
 	camera = new THREE.PerspectiveCamera(70, undefined, 0.01, 2000);
 
 	scene = new THREE.Scene();
-	const light = new THREE.HemisphereLight(0xffffff, 0x080820, 1);
+	const light = new THREE.HemisphereLight(0xffffff, 0x080820, 3);
 	scene.add(light);
 	scene.add(renderGroup);
 

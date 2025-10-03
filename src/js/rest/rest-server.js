@@ -14,7 +14,7 @@ const listfile = require('../casc/listfile');
 const CASCLocal = require('../casc/casc-source-local');
 const CASCRemote = require('../casc/casc-source-remote');
 const modelsService = require('../ui/tab-models');
-const texturesService = require('../ui/tab-textures');
+const textureExporter = require('../ui/texture-exporter');
 const charactersService = require('../ui/headless-character');
 const WDCReader = require('../db/WDCReader');
 const ADTExporter = require('../3D/exporters/ADTExporter');
@@ -348,7 +348,7 @@ class RestServer {
 
 		const exportID = this.nextExportID();
 		try {
-			const result = await texturesService.exportFiles(files, false, exportID, {
+			const result = await textureExporter.exportFiles(files, false, exportID, {
 				suppressRcpHook: true,
 				useExportPathsStream: false
 			});

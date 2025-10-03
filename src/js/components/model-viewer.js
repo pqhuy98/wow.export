@@ -4,8 +4,9 @@
 	License: MIT
  */
 const CameraControls = require('../3D/camera/CameraControls');
+const tabModels = require('../ui/tab-models');
 
-Vue.component('model-viewer', {
+module.exports = {
 	props: ['context'],
 
 	methods: {
@@ -13,6 +14,17 @@ Vue.component('model-viewer', {
 			if (!this.isRendering)
 				return;
 	
+			const currentTime = performance.now() * 0.001;
+			if (this.lastTime === undefined)
+				this.lastTime = currentTime;
+
+			const deltaTime = currentTime - this.lastTime;
+			this.lastTime = currentTime;
+
+			const activeRenderer = tabModels.getActiveRenderer();
+			if (activeRenderer && activeRenderer.updateAnimation)
+				activeRenderer.updateAnimation(deltaTime);
+
 			this.controls.update();
 			this.renderer.render(this.context.scene, this.context.camera);
 			requestAnimationFrame(() => this.render());
@@ -24,7 +36,7 @@ Vue.component('model-viewer', {
 	 */
 	mounted: function() {
 		const container = this.$el;
-		this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+		this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true, outputColorSpace: THREE.SRGBColorSpace  });
 
 		const canvas = this.renderer.domElement;
 		container.appendChild(canvas);
@@ -55,7 +67,7 @@ Vue.component('model-viewer', {
 	/**
 	 * Invoked when the component is destroyed.
 	 */
-	beforeDestroy: function() {
+	beforeUnmount: function() {
 		this.isRendering = false;
 		this.controls.dispose();
 		this.renderer.dispose();
@@ -66,4 +78,4 @@ Vue.component('model-viewer', {
 	 * HTML mark-up to render for this component.
 	 */
 	template: `<div class="image ui-model-viewer"></div>`
-});
+};

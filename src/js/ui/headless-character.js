@@ -9,6 +9,7 @@ const WDCReader = require('../db/WDCReader');
 const listfile = require('../casc/listfile');
 const BoneMapper = require('../3D/BoneMapper');
 const DBCreatures = require('../db/caches/DBCreatures');
+const { initCaches } = require('../db/caches/init-cache');
 
 let lookupsCache = null;
 async function getLookups() {
@@ -42,6 +43,7 @@ async function getLookups() {
 	const chrModelMaterialDB = new WDCReader('DBFilesClient/ChrModelMaterial.db2');
 	const chrRaceXChrModelDB = new WDCReader('DBFilesClient/ChrRaceXChrModel.db2');
 	await Promise.all([
+		...initCaches(),
 		tfdDB.parse(),
 		chrModelDB.parse(),
 		chrCustElementDB.parse(),
@@ -207,7 +209,7 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 		console.log('[headless] ModelID for gender', genderNum, ':', modelID);
 		if (!modelID) throw new Error('Invalid gender for race');
 		const fileDataID = lookups.chrModelIDToFileDataID.get(modelID);
-		console.log('[headless] fileDataID for modelID', modelID, ':', fileDataID, 'Available modelIDs:', Array.from(lookups.chrModelIDToFileDataID.keys()));
+		console.log('[headless] fileDataID for modelID', modelID, ':', fileDataID, 'Available modelIDs:', Array.from(lookups.chrModelIDToFileDataID.entries()));
 		if (!fileDataID) {
 			console.log('[headless] No fileDataID for modelID', modelID, 'in chrModelIDToFileDataID:', Array.from(lookups.chrModelIDToFileDataID.keys()));
 			throw new Error('No fileDataID for model (modelID: ' + modelID + ')');

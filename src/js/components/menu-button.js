@@ -3,7 +3,7 @@
 	Authors: Kruithne <kruithne@gmail.com>
 	License: MIT
  */
-Vue.component('menu-button', {
+module.exports = {
 	/**
 	 * options: An array of objects with label/value properties.
 	 * default: The default value from the options array.
@@ -11,6 +11,7 @@ Vue.component('menu-button', {
 	 * dropdown: If true, the full button prompts the context menu, not just the arrow.
 	 */
 	props: ['options', 'default', 'disabled', 'dropdown'],
+	emits: ['change', 'click'],
 
 	data: function() {
 		return {
@@ -71,11 +72,11 @@ Vue.component('menu-button', {
 	/**
 	 * HTML mark-up to render for this component.
 	 */
-	template: `<div class="ui-menu-button" :class="{ disabled, dropdown, open }">
+		template: `<div class="ui-menu-button" :class="{ disabled, dropdown, open }">
 		<input type="button" :value="this.selected.label ?? this.selected.value" :class="{ disabled }" @click="handleClick"/>
-		<div class="arrow" @click="openMenu"></div>
+		<div class="arrow" @click.stop="openMenu"></div>
 		<context-menu :node="open" @close="open = false">
 			<span v-for="option in options" @click="select(option)">{{ option.label ?? option.value }}</span>
 		</context-menu>
 	</div>`
-});
+};

@@ -26,6 +26,7 @@ const TABLE_FORMATS = {
 	0x35434457: { name: 'WDC5', wdcVersion: 5 },
 };
 
+
 /**
  * Returns the schema type symbol for a DBD field.
  * @param {DBDField} entry 
@@ -80,6 +81,8 @@ class WDCReader {
 		this.isLoaded = false;
 		this.idField = null;
 		this.idFieldIndex = null;
+		
+		this.relationshipLookup = new Map();
 	}
 
 	/**
@@ -147,6 +150,32 @@ class WDCReader {
 		}
 
 		return rows;
+	}
+
+	/**
+	 * Get rows by foreign key value (uses relationship maps).
+	 * Returns empty array if no rows found or table has no relationship data.
+	 * @param {number} foreignKeyValue - The FK value to search for
+	 * @returns {Array} Array of matching row objects
+	 */
+	getRelationRows(foreignKeyValue) {
+		if (!this.isLoaded)
+			throw new Error('Attempted to query relationship data before table was loaded.');
+		
+		foreignKeyValue = parseInt(foreignKeyValue);
+		
+		const recordIDs = this.relationshipLookup.get(foreignKeyValue);
+		if (!recordIDs || recordIDs.length === 0)
+			return [];
+		
+		const results = [];
+		for (const recordID of recordIDs) {
+			const row = this.rows.get(recordID);
+			if (row !== undefined)
+				results.push(row);
+		}
+		
+		return results;
 	}
 
 	/**
@@ -492,11 +521,15 @@ class WDCReader {
 			}
 
 			const hasIDMap = section.idList.length > 0;
+			const emptyIDMap = hasIDMap && section.idList.every(id => id === 0); 
 			for (let i = 0, n = header.recordCount; i < n; i++) {
 				let recordID;
 
 				if (hasIDMap)
 					recordID = section.idList[i];
+
+				if(hasIDMap && emptyIDMap)
+					recordID = i;
 
 				const recordOfs = isNormal ? (i * recordSize) : offsetMap[wdcVersion === 2 ? recordID : i].offset;
 
@@ -720,6 +753,14 @@ class WDCReader {
 				}
 
 				this.rows.set(recordID, out);
+				
+				if (section.relationshipMap && section.relationshipMap.has(i)) {
+					const foreignID = section.relationshipMap.get(i);
+					if (!this.relationshipLookup.has(foreignID))
+						this.relationshipLookup.set(foreignID, []);
+					
+					this.relationshipLookup.get(foreignID).push(recordID);
+				}
 			}
 		}
 

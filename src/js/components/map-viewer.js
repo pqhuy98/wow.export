@@ -8,7 +8,6 @@ const core = require('../core');
 const constants = require('../constants');
 
 const MAP_SIZE = constants.GAME.MAP_SIZE;
-const MAP_SIZE_SQ = constants.GAME.MAP_SIZE_SQ;
 const MAP_COORD_BASE = constants.GAME.MAP_COORD_BASE;
 const TILE_SIZE = constants.GAME.TILE_SIZE;
 
@@ -25,7 +24,7 @@ const state = {
 	pendingRequests: new Set()
 };
 
-Vue.component('map-viewer', {
+module.exports = {
 	/**
 	 * loader: Tile loader function.
 	 * tileSize: Base size of tiles (before zoom).
@@ -35,6 +34,7 @@ Vue.component('map-viewer', {
 	 * selection: Array defining selected tiles.
 	 */
 	props: ['loader', 'tileSize', 'map', 'zoom', 'mask', 'selection'],
+	emits: ['update:selection'],
 
 	data: function() {
 		return {
@@ -52,7 +52,11 @@ Vue.component('map-viewer', {
 	 */
 	mounted: function() {
 		// Store a local reference to the canvas context for faster rendering.
-		this.context = this.$refs.canvas.getContext('2d');
+		this.context = this.$refs.canvas.getContext('2d', { willReadFrequently: true });
+		this.overlayContext = this.$refs.overlayCanvas.getContext('2d');
+
+		state.doubleBuffer ??= document.createElement('canvas');
+		this.doubleBufferContext = state.doubleBuffer.getContext('2d');
 
 		// Create anonymous pass-through functions for our event handlers
 		// to maintain context. We store them so we can unregister them later.
@@ -99,6 +103,12 @@ Vue.component('map-viewer', {
 
 		// Disconnect the resize observer for the canvas.
 		this.observer.disconnect();
+
+		// Clean up final pass timeout
+		if (state.finalPassTimeout) {
+			clearTimeout(state.finalPassTimeout);
+			state.finalPassTimeout = null;
+		}
 	},
 
 	watch: {
@@ -108,7 +118,7 @@ Vue.component('map-viewer', {
 		 */
 		map: function() {
 			// Reset the cache.
-			this.initializeCache();
+			this.clearTileState();
 
 			// Set the map position to a default position.
 			// This will trigger a re-render for us too.
@@ -119,22 +129,23 @@ Vue.component('map-viewer', {
 		 * Invoked when the tile being hovered over changes.
 		 */
 		hoverTile: function() {
-			this.render();
+			this.renderOverlay();
 		}
 	},
 
 	methods: {
 		/**
-		 * Initialize a fresh cache array.
+		 * Clear tile queue, requested set, and rendered set.
+		 * Also reset previous tracking to force full redraw.
 		 */
-		initializeCache: function() {
+		clearTileState: function() {
 			state.tileQueue = [];
 			state.cache = new Array(MAP_SIZE_SQ);
 			state.pendingRequests.clear();
 		},
 
 		/**
-		 * Process the next tile in the loading queue.
+		 * Process tiles in the loading queue up to the concurrency limit.
 		 */
 		checkTileQueue: function() {
 			if (state.tileQueue.length === 0) {
@@ -149,7 +160,122 @@ Vue.component('map-viewer', {
 		},
 
 		/**
-		 * Add a tile to the queue to be loaded.
+		 * Perform a final pass to detect and fix tiles with transparency issues.
+		 * This addresses seams caused by tiles being clipped but still marked as rendered.
+		 */
+		performFinalPass: function() {
+			// Skip if no map or canvas available
+			if (this.map === null || !this.$refs.canvas)
+				return;
+
+			const canvas = this.$refs.canvas;
+			const ctx = this.context;
+			const viewport = this.$el;
+			const tileSize = Math.floor(this.tileSize / state.zoomFactor);
+			
+			// Calculate viewport bounds relative to canvas
+			const bufferX = (canvas.width - viewport.clientWidth) / 2;
+			const bufferY = (canvas.height - viewport.clientHeight) / 2;
+			
+			// Calculate visible tile range
+			const startX = Math.max(0, Math.floor(-state.offsetX / tileSize));
+			const startY = Math.max(0, Math.floor(-state.offsetY / tileSize));
+			const endX = Math.min(MAP_SIZE, startX + Math.ceil(canvas.width / tileSize) + 1);
+			const endY = Math.min(MAP_SIZE, startY + Math.ceil(canvas.height / tileSize) + 1);
+
+			const tilesNeedingRerender = [];
+
+			// Check each visible tile for transparency issues
+			for (let x = startX; x < endX; x++) {
+				for (let y = startY; y < endY; y++) {
+					const index = (x * MAP_SIZE) + y;
+					
+					// Skip if not masked or not supposedly rendered
+					if (this.mask && this.mask[index] !== 1)
+						continue;
+					if (!state.rendered.has(index))
+						continue;
+
+					const drawX = (x * tileSize) + state.offsetX;
+					const drawY = (y * tileSize) + state.offsetY;
+					
+					// Skip tiles completely outside viewport
+					if (drawX + tileSize <= bufferX || drawX >= bufferX + viewport.clientWidth ||
+						drawY + tileSize <= bufferY || drawY >= bufferY + viewport.clientHeight)
+						continue;
+
+					// Check if this tile has transparency where it shouldn't
+					if (this.tileHasUnexpectedTransparency(drawX, drawY, tileSize)) {
+						tilesNeedingRerender.push({ x, y, index, tileSize });
+						// Remove from rendered set so it can be re-queued
+						state.rendered.delete(index);
+						state.requested.delete(index);
+					}
+				}
+			}
+
+			// Re-queue tiles that need re-rendering
+			for (const tile of tilesNeedingRerender) {
+				this.queueTile(tile.x, tile.y, tile.index, tile.tileSize);
+			}
+		},
+
+		/**
+		 * Check if a tile has unexpected transparency (indicating clipping issues).
+		 * Uses efficient sampling to detect transparency without checking every pixel.
+		 * @param {number} drawX Canvas X position of tile
+		 * @param {number} drawY Canvas Y position of tile  
+		 * @param {number} tileSize Size of tile
+		 * @returns {boolean} True if tile has unexpected transparency
+		 */
+		tileHasUnexpectedTransparency: function(drawX, drawY, tileSize) {
+			const canvas = this.$refs.canvas;
+			const ctx = this.context;
+			
+			// Clamp tile bounds to canvas
+			const left = Math.max(0, Math.floor(drawX));
+			const top = Math.max(0, Math.floor(drawY));
+			const right = Math.min(canvas.width, Math.ceil(drawX + tileSize));
+			const bottom = Math.min(canvas.height, Math.ceil(drawY + tileSize));
+			
+			// Skip if tile is completely outside canvas
+			if (left >= right || top >= bottom)
+				return false;
+			
+			const width = right - left;
+			const height = bottom - top;
+			
+			if (width < 4 || height < 4)
+				return false;
+
+			try {
+				const imageData = ctx.getImageData(left, top, width, height);
+				const data = imageData.data;
+				
+				const samplePoints = [
+					[0, 0], [width - 1, 0], [0, height - 1], [width - 1, height - 1], // corners
+					[Math.floor(width / 2), 0], [Math.floor(width / 2), height - 1], // top/bottom center
+					[0, Math.floor(height / 2)], [width - 1, Math.floor(height / 2)], // left/right center
+					[Math.floor(width / 2), Math.floor(height / 2)] // center
+				];
+
+				for (const [px, py] of samplePoints) {
+					const index = (py * width + px) * 4;
+					const alpha = data[index + 3]; // Alpha channel
+					
+					if (alpha === 0)
+						return true;
+				}
+
+				return false;
+				
+			} catch (error) {
+				return false;
+			}
+		},
+
+		/**
+		 * Add a tile to the queue to be loaded if not already requested.
 		 * @param {number} x 
 		 * @param {number} y 
 		 * @param {number} index 
@@ -198,13 +324,10 @@ Vue.component('map-viewer', {
 		 */
 		loadTile: function(tile) {
 			this.awaitingTile = true;
+			state.activeTileRequests++;
 
-			const [x, y, index, tileSize] = tile;
-
-			// We need to use a local reference to the cache so that async callbacks
-			// for tile loading don't overwrite the most current cache if they resolve
-			// after a new map has been selected. 
-			const cache = state.cache;
+			const [x, y, index, tileSize, renderTarget = 'main'] = tile;
+			const currentZoomFactor = state.zoomFactor;
 
 			this.loader(x, y, tileSize).then(data => {
 				if (data !== false && data) {
@@ -258,8 +381,29 @@ Vue.component('map-viewer', {
 			this.setMapPosition(posX, posY);
 		},
 
+
 		/**
-		 * Update the position of the internal container.
+		 * Calculate optimal canvas dimensions based on tile size and zoom levels.
+		 * Canvas is sized to accommodate full tiles with a buffer zone that ensures
+		 * tiles are never rendered partially at any zoom level.
+		 */
+		calculateCanvasSize: function() {
+			const viewport = this.$el;
+			const viewportWidth = viewport.clientWidth;
+			const viewportHeight = viewport.clientHeight;
+
+			// Buffer must be large enough for the largest possible tile (zoom factor = 1)
+			const maxTileSize = this.tileSize; // At zoom factor 1 (most zoomed in)
+			
+			// Canvas needs to be viewport size + buffer on all sides to ensure full tiles
+			return {
+				width: viewportWidth + (maxTileSize * 2), // +1 tile buffer on each side
+				height: viewportHeight + (maxTileSize * 2) // +1 tile buffer on each side
+			};
+		},
+
+		/**
+		 * Update the position of the internal container with double-buffer optimization.
 		 */
 		render: function() {
 			// If no map has been selected, do not render.
@@ -271,37 +415,219 @@ Vue.component('map-viewer', {
 			if (!canvas)
 				return;
 
-			// Update the internal canvas dimensions to match the element.
-			canvas.width = canvas.offsetWidth;
-			canvas.height = canvas.offsetHeight;
+			// Calculate optimal canvas size
+			const canvasSize = this.calculateCanvasSize();
+			
+			// Update canvas dimensions only if they've changed to avoid unnecessary redraws
+			if (canvas.width !== canvasSize.width || canvas.height !== canvasSize.height) {
+				canvas.width = canvasSize.width;
+				canvas.height = canvasSize.height;
 
-			// Viewport width/height defines what is visible to the user.
-			const viewport = this.$el;
-			const viewportWidth = viewport.clientWidth;
-			const viewportHeight = viewport.clientHeight;
+				// Force full redraw when canvas size changes
+				state.prevOffsetX = null;
+				state.prevOffsetY = null;
+				state.prevZoomFactor = null;
+			}
 
-			// Calculate which tiles will appear within the viewer.
+			// Update double-buffer dimensions to match
+			if (state.doubleBuffer.width !== canvasSize.width || state.doubleBuffer.height !== canvasSize.height) {
+				state.doubleBuffer.width = canvasSize.width;
+				state.doubleBuffer.height = canvasSize.height;
+			}
+
+			// Update overlay canvas dimensions to match
+			const overlayCanvas = this.$refs.overlayCanvas;
+			if (overlayCanvas) {
+				if (overlayCanvas.width !== canvasSize.width || overlayCanvas.height !== canvasSize.height) {
+					overlayCanvas.width = canvasSize.width;
+					overlayCanvas.height = canvasSize.height;
+				}
+			}
+
+			// Calculate current tile size based on zoom factor
 			const tileSize = Math.floor(this.tileSize / state.zoomFactor);
 
-			// Get local reference to the canvas context.
+			// Check if this is a simple pan (same zoom, only offset changed)
+			const isPan = state.prevZoomFactor === state.zoomFactor && 
+						  state.prevOffsetX !== null && state.prevOffsetY !== null;
+
+			if (isPan)
+				this.renderWithDoubleBuffer(canvas, canvasSize, tileSize);
+			else
+				this.renderFullRedraw(canvas, canvasSize, tileSize);
+
+			// Mark that we may need a final pass to check for clipping issues
+			state.needsFinalPass = true;
+
+			// Update previous state for next render
+			state.prevOffsetX = state.offsetX;
+			state.prevOffsetY = state.offsetY;
+			state.prevZoomFactor = state.zoomFactor;
+
+			// Render overlays after main canvas rendering
+			this.renderOverlay();
+		},
+
+		/**
+		 * Render using double-buffer technique for efficient panning.
+		 */
+		renderWithDoubleBuffer: function(canvas, canvasSize, tileSize) {
 			const ctx = this.context;
 			ctx.imageSmoothingEnabled = false;
 
-			// We need to use a local reference to the cache so that async callbacks
-			// for tile loading don't overwrite the most current cache if they resolve
-			// after a new map has been selected. 
-			const cache = state.cache;
+			// Copy current canvas to double-buffer with the new offset applied
+			doubleCtx.clearRect(0, 0, canvasSize.width, canvasSize.height);
+			doubleCtx.drawImage(canvas, deltaX, deltaY);
 
-			// Iterate over all possible tiles in a map and render as needed.
-			for (let x = 0; x < MAP_SIZE; x++) {
-				for (let y = 0; y < MAP_SIZE; y++) {
-					// drawX/drawY is the absolute position to draw this tile.
+			const viewport = this.$el;
+			const bufferX = (canvas.width - viewport.clientWidth) / 2;
+			const bufferY = (canvas.height - viewport.clientHeight) / 2;
+
+			// Calculate which tiles should be visible in the current view
+			const startX = Math.max(0, Math.floor(-state.offsetX / tileSize));
+			const startY = Math.max(0, Math.floor(-state.offsetY / tileSize));
+			const endX = Math.min(MAP_SIZE, startX + Math.ceil(canvas.width / tileSize) + 1);
+			const endY = Math.min(MAP_SIZE, startY + Math.ceil(canvas.height / tileSize) + 1);
+
+			// Track tiles that should be visible but aren't rendered
+			const missingTiles = [];
+			const trackedTiles = [];
+
+			// Check all tiles in the visible range
+			for (let x = startX; x < endX; x++) {
+				for (let y = startY; y < endY; y++) {
+					const index = (x * MAP_SIZE) + y;
+
+					// Skip if this tile is masked out
+					if (this.mask && this.mask[index] !== 1)
+						continue;
+
 					const drawX = (x * tileSize) + state.offsetX;
 					const drawY = (y * tileSize) + state.offsetY;
+					
+					// Check if this tile should be visible in viewport
+					const isInViewport = !(drawX + tileSize <= bufferX || drawX >= bufferX + viewport.clientWidth ||
+											drawY + tileSize <= bufferY || drawY >= bufferY + viewport.clientHeight);
 
-					// Cache is a one-dimensional array, calculate the index as such.
+					if (isInViewport) {
+						if (!state.rendered.has(index)) {
+							missingTiles.push({ x, y, index, drawX, drawY });
+							this.queueTileForDoubleBuffer(x, y, index, tileSize);
+						} else {
+							trackedTiles.push({ x, y, index });
+						}
+					}
+				}
+			}
+
+			// Clean up tiles that are no longer visible anywhere on canvas
+			const tilesToRemove = [];
+			for (const index of state.rendered) {
+				const x = Math.floor(index / MAP_SIZE);
+				const y = index % MAP_SIZE;
+				const drawX = (x * tileSize) + state.offsetX;
+				const drawY = (y * tileSize) + state.offsetY;
+				
+				if (drawX + tileSize <= 0 || drawX >= canvas.width || drawY + tileSize <= 0 || drawY >= canvas.height)
+					tilesToRemove.push(index);
+			}
+			
+			for (let i = 0; i < tilesToRemove.length; i++)
+				state.rendered.delete(tilesToRemove[i]);
+
+
+			// Copy double-buffer back to main canvas
+			ctx.clearRect(0, 0, canvas.width, canvas.height);
+			ctx.drawImage(state.doubleBuffer, 0, 0);
+		},
+
+		/**
+		 * Render with full redraw (used for zoom changes, map changes, etc.).
+		 */
+		renderFullRedraw: function(canvas, canvasSize, tileSize) {
+			const ctx = this.context;
+
+			// Clear the entire canvas and rendered set
+			ctx.clearRect(0, 0, canvas.width, canvas.height);
+			state.rendered.clear();
+
+			// Calculate which tiles are visible
+			const startX = Math.max(0, Math.floor(-state.offsetX / tileSize));
+			const startY = Math.max(0, Math.floor(-state.offsetY / tileSize));
+			const endX = Math.min(MAP_SIZE, startX + Math.ceil(canvas.width / tileSize) + 1);
+			const endY = Math.min(MAP_SIZE, startY + Math.ceil(canvas.height / tileSize) + 1);
+
+			const viewport = this.$el;
+			const bufferX = (canvas.width - viewport.clientWidth) / 2;
+			const bufferY = (canvas.height - viewport.clientHeight) / 2;
+
+			// Queue all visible tiles for loading
+			for (let x = startX; x < endX; x++) {
+				for (let y = startY; y < endY; y++) {
+					const drawX = (x * tileSize) + state.offsetX;
+					const drawY = (y * tileSize) + state.offsetY;
+					
+					if (drawX + tileSize <= bufferX || drawX >= bufferX + viewport.clientWidth ||
+						drawY + tileSize <= bufferY || drawY >= bufferY + viewport.clientHeight)
+						continue;
+
 					const index = (x * MAP_SIZE) + y;
-					const cached = cache[index];
+
+					// Skip if this tile is masked out
+					if (this.mask && this.mask[index] !== 1)
+						continue;
+
+					// Queue tile for loading
+					this.queueTile(x, y, index, tileSize);
+				}
+			}
+		},
+
+		/**
+		 * Render only the overlay canvas with selection and hover states.
+		 */
+		renderOverlay: function() {
+			// If no map has been selected, do not render.
+			if (this.map === null)
+				return;
+
+			// Get overlay canvas reference
+			const overlayCanvas = this.$refs.overlayCanvas;
+			if (!overlayCanvas)
+				return;
+
+			const overlayCtx = this.overlayContext;
+			if (!overlayCtx)
+				return;
+
+			// Clear the overlay canvas
+			overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+			// Calculate current tile size based on zoom factor
+			const tileSize = Math.floor(this.tileSize / state.zoomFactor);
+			const canvas = this.$refs.canvas;
+
+			// Calculate which tiles might be visible
+			const startX = Math.max(0, Math.floor(-state.offsetX / tileSize));
+			const startY = Math.max(0, Math.floor(-state.offsetY / tileSize));
+			const endX = Math.min(MAP_SIZE, startX + Math.ceil(canvas.width / tileSize) + 1);
+			const endY = Math.min(MAP_SIZE, startY + Math.ceil(canvas.height / tileSize) + 1);
+
+			const viewport = this.$el;
+			const bufferX = (canvas.width - viewport.clientWidth) / 2;
+			const bufferY = (canvas.height - viewport.clientHeight) / 2;
+
+			// Render overlays for visible tiles
+			for (let x = startX; x < endX; x++) {
+				for (let y = startY; y < endY; y++) {
+					const drawX = (x * tileSize) + state.offsetX;
+					const drawY = (y * tileSize) + state.offsetY;
+					
+					if (drawX + tileSize <= bufferX || drawX >= bufferX + viewport.clientWidth ||
+						drawY + tileSize <= bufferY || drawY >= bufferY + viewport.clientHeight)
+						continue;
+
+					const index = (x * MAP_SIZE) + y;
 
 					// This chunk is masked out, so skip rendering it.
 					if (this.mask && this.mask[index] !== 1)
@@ -349,14 +675,14 @@ Vue.component('map-viewer', {
 
 					// Draw the selection overlay if this tile is selected.
 					if (this.selection.includes(index)) {
-						ctx.fillStyle = 'rgba(159, 241, 161, 0.5)';
-						ctx.fillRect(drawX, drawY, tileSize, tileSize);	
+						overlayCtx.fillStyle = 'rgba(159, 241, 161, 0.5)';
+						overlayCtx.fillRect(drawX, drawY, tileSize, tileSize);	
 					}
 
 					// Draw the hover overlay if this tile is hovered over.
 					if (this.hoverTile === index) {
-						ctx.fillStyle = 'rgba(87, 175, 226, 0.5)';
-						ctx.fillRect(drawX, drawY, tileSize, tileSize);
+						overlayCtx.fillStyle = 'rgba(87, 175, 226, 0.5)';
+						overlayCtx.fillRect(drawX, drawY, tileSize, tileSize);
 					}
 				}
 			}
@@ -378,16 +704,18 @@ Vue.component('map-viewer', {
 					return;
 				}
 
-				this.selection.length = 0; // Reset the selection array.
+				const newSelection = [];
 				
 				// Iterate over all available tiles in the mask and select them.
 				for (let i = 0, n = this.mask.length; i < n; i++) {
 					if (this.mask[i] === 1)
-						this.selection.push(i);
+						newSelection.push(i);
 				}
 
-				// Trigger a re-render to show the new selection.
-				this.render();
+				this.$emit('update:selection', newSelection);
+
+				// Trigger an overlay re-render to show the new selection.
+				this.renderOverlay();
 				
 				// Absorb this event preventing further action.
 				event.preventDefault();
@@ -414,10 +742,6 @@ Vue.component('map-viewer', {
 				// If we have a WDT, and this tile is not defined, disallow selection.
 				if (this.mask[index] !== 1)
 					return;
-			} else {
-				// No WDT, disallow selection if tile is not rendered.
-				if (typeof state.cache[index] !== 'object')
-					return;
 			}
 
 			const check = this.selection.indexOf(index);
@@ -429,8 +753,8 @@ Vue.component('map-viewer', {
 			else if (!this.selectState && check === -1)
 				this.selection.push(index);
 
-			// Trigger a re-render so the overlay updates.
-			this.render();
+			// Trigger an overlay re-render to show the selection change.
+			this.renderOverlay();
 		},
 
 		/**
@@ -497,9 +821,15 @@ Vue.component('map-viewer', {
 		 */
 		mapPositionFromClientPoint: function(x, y) {
 			const viewport = this.$el.getBoundingClientRect();
+			const canvas = this.$refs.canvas;
 			
-			const viewOfsX = (x - viewport.x) - state.offsetX;
-			const viewOfsY = (y - viewport.y) - state.offsetY;
+			// Calculate canvas position relative to viewport (centered)
+			const canvasOffsetX = (viewport.width - canvas.width) / 2;
+			const canvasOffsetY = (viewport.height - canvas.height) / 2;
+			
+			// Convert client coordinates to canvas coordinates
+			const viewOfsX = (x - viewport.x - canvasOffsetX) - state.offsetX;
+			const viewOfsY = (y - viewport.y - canvasOffsetY) - state.offsetY;
 
 			const tileSize = Math.floor(this.tileSize / state.zoomFactor);
 
@@ -528,8 +858,9 @@ Vue.component('map-viewer', {
 			const ofsY = (((posY - MAP_COORD_BASE) / TILE_SIZE) * tileSize);
 
 			const viewport = this.$el;
-			state.offsetX = ofsX + (viewport.clientWidth / 2);
-			state.offsetY = ofsY + (viewport.clientHeight / 2);
+			const maxTileSize = this.tileSize;
+			state.offsetX = ofsX + (viewport.clientWidth / 2) + maxTileSize;
+			state.offsetY = ofsY + (viewport.clientHeight / 2) + maxTileSize;
 
 			this.render();
 		},
@@ -613,5 +944,6 @@ Vue.component('map-viewer', {
 		</div>
 		<div class="hover-info">{{ hoverInfo }}</div>
 		<canvas ref="canvas"></canvas>
+		<canvas ref="overlayCanvas" class="overlay-canvas"></canvas>
 	</div>`
-});
+};

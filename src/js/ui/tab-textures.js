@@ -7,7 +7,6 @@ const core = require('../core');
 const log = require('../log');
 const util = require('util');
 const path = require('path');
-const generics = require('../generics');
 const listfile = require('../casc/listfile');
 const BLPFile = require('../casc/blp');
 const BufferWrapper = require('../buffer');
@@ -15,12 +14,14 @@ const ExportHelper = require('../casc/export-helper');
 const EncryptionError = require('../casc/blte-reader').EncryptionError;
 const JSONWriter = require('../3D/writers/JSONWriter');
 const WDCReader = require('../db/WDCReader');
+const textureExporter = require('./texture-exporter');
 
 const textureAtlasEntries = new Map(); // atlasID => { width: number, height: number, regions: [] }
 const textureAtlasRegions = new Map(); // regionID => { name: string, width: number, height: number, top: number, left: number }
 const textureAtlasMap = new Map(); // fileDataID => atlasID
 
 let hasLoadedAtlasTable = false;
+let hasLoadedUnknownTextures = false;
 
 let selectedFileDataID = 0;
 
@@ -85,14 +86,11 @@ const previewTextureByID = async (fileDataID, texture = null) => {
 
 /**
  * Load texture atlas regions from data tables.
+ * This function should only be called as part of the main texture tab loading screen.
+ * @param {object} progress - Progress object for reporting steps
  */
-const loadTextureAtlasData = async () => {
-	if (!hasLoadedAtlasTable && !core.view.isBusy && core.view.config.showTextureAtlas) {
-		// show a loading screen
-		const progress = core.createProgress(3);
-		core.view.setScreen('loading');
-		core.view.isBusy++;
-
+const loadTextureAtlasData = async (progress) => {
+	if (!hasLoadedAtlasTable && core.view.config.showTextureAtlas) {
 		// load UiTextureAtlas which maps fileDataID to an atlas ID
 		await progress.step('Loading texture atlases...');
 		const uiTextureAtlasTable = new WDCReader('DBFilesClient/UiTextureAtlas.db2');
@@ -135,13 +133,29 @@ const loadTextureAtlasData = async () => {
 		}
 
 		log.write('Loaded %d texture atlases with %d regions', textureAtlasEntries.size, loadedRegions);
-
 		hasLoadedAtlasTable = true;
+	}
+};
 
-		// hide the loading screen
-		core.view.loadPct = -1;
-		core.view.isBusy--;
-		core.view.setScreen('tab-textures');
+/**
+ * Load texture atlas data after a settings change.
+ */
+const reloadTextureAtlasData = async () => {
+	if (!hasLoadedAtlasTable && core.view.config.showTextureAtlas && !core.view.isBusy) {
+		const progress = core.createProgress(3);
+		core.view.setScreen('loading');
+		core.view.isBusy++;
+		
+		try {
+			await loadTextureAtlasData(progress);
+			core.view.isBusy--;
+			core.view.setScreen('tab-textures');
+		} catch (error) {
+			core.view.isBusy--;
+			core.view.setScreen('tab-textures');
+			log.write('Failed to load texture atlas data: %o', error);
+			core.setToast('error', 'Failed to load texture atlas data. Check the log for details.');
+		}
 	}
 };
 
@@ -198,25 +212,6 @@ const updateTextureAtlasOverlay = () => {
 	core.view.textureAtlasOverlayRegions = renderRegions;
 };
 
-/**
- * Retrieve the fileDataID and fileName for a given fileDataID or fileName.
- * @param {number|string} input 
- * @returns {object}
- */
-const getFileInfoPair = (input) => {
-	let fileName;
-	let fileDataID;
-
-	if (typeof input === 'number') {
-		fileDataID = input;
-		fileName = listfile.getByID(fileDataID) ?? listfile.formatUnknownFile(fileDataID, '.blp');
-	} else {
-		fileName = listfile.stripFileEntry(input);
-		fileDataID = listfile.getByFilename(fileName);
-	}
-
-	return { fileName, fileDataID };
-};
 
 const exportTextureAtlasRegions = async (fileDataID) => {
 	const atlasID = textureAtlasMap.get(fileDataID);
@@ -267,110 +262,18 @@ const exportTextureAtlasRegions = async (fileDataID) => {
 	helper.finish();
 };
 
-const exportFiles = async (files, isLocal = false, exportID = -1, options = {}) => {
-	const exportOptions = options || {};
-	const configSnapshot = Object.freeze({ ...core.view.config });
-	const format = configSnapshot.exportTextureFormat;
 
-	if (format === 'CLIPBOARD') {
-		const { fileName, fileDataID } = getFileInfoPair(files[0]);
-
-		const data = await (isLocal ? BufferWrapper.readFile(fileName) : core.view.casc.getFile(fileDataID));
-		const blp = new BLPFile(data);
-		const png = blp.toPNG(core.view.config.exportChannelMask);
-		
-		const clipboard = nw.Clipboard.get();
-		clipboard.set(png.toBase64(), 'png', true);
-
-		log.write('Copied texture to clipboard (%s)', fileName);
-		core.setToast('success', util.format('Selected texture %s has been copied to the clipboard', fileName), null, -1, true);
-
-		return;
-	}
-
-	const helper = new ExportHelper(files.length, 'texture');
-	helper.start();
-
-	const exportPaths = exportOptions.useExportPathsStream === false ? null : core.openLastExportStream();
-
-	const overwriteFiles = isLocal || configSnapshot.overwriteFiles;
-	const exportMeta = configSnapshot.exportBLPMeta;
-
-	const manifest = { type: 'TEXTURES', exportID, succeeded: [], failed: [] };
-
-	for (let fileEntry of files) {
-		// Abort if the export has been cancelled.
-		if (helper.isCancelled())
-			return;
-			
-		const { fileName, fileDataID } = getFileInfoPair(fileEntry);
-		
-		try {
-			let exportPath = isLocal ? fileName : ExportHelper.getExportPath(fileName);
-			if (format !== 'BLP')
-				exportPath = ExportHelper.replaceExtension(exportPath, '.png');
-
-			if (overwriteFiles || !await generics.fileExists(exportPath)) {
-				const data = await (isLocal ? BufferWrapper.readFile(fileName) : core.view.casc.getFile(fileDataID));
-
-				if (format === 'BLP') {
-					// Export as raw file with no conversion.
-					await data.writeToFile(exportPath);
-					await exportPaths?.writeLine('BLP:' + exportPath);
-				} else {
-					// Export as PNG.
-				const blp = new BLPFile(data);
-				await blp.saveToPNG(exportPath, configSnapshot.exportChannelMask);
-					await exportPaths?.writeLine('PNG:' + exportPath);
-
-					if (exportMeta) {
-						const jsonOut = ExportHelper.replaceExtension(exportPath, '.json');
-						const json = new JSONWriter(jsonOut);
-						json.addProperty('encoding', blp.encoding);
-						json.addProperty('alphaDepth', blp.alphaDepth);
-						json.addProperty('alphaEncoding', blp.alphaEncoding);
-						json.addProperty('mipmaps', blp.containsMipmaps);
-						json.addProperty('width', blp.width);
-						json.addProperty('height', blp.height);
-						json.addProperty('mipmapCount', blp.mapCount);
-						json.addProperty('mipmapSizes', blp.mapSizes);
-						
-						await json.write(overwriteFiles);
-						manifest.succeeded.push({ type: 'META', fileDataID, file: jsonOut })
-					}
-				}
-			} else {
-				log.write('Skipping export of %s (file exists, overwrite disabled)', exportPath);
-			}
-
-			helper.mark(fileName, true);
-			manifest.succeeded.push({ type: format, fileDataID, file: exportPath });
-		} catch (e) {
-			helper.mark(fileName, false, e.message, e.stack);
-			manifest.failed.push({ type: format, fileDataID });
-		}
-	}
-
-	exportPaths?.close();
-
-	helper.finish();
-
-	// Dispatch file manifest to RCP for legacy clients (optional for REST callers).
-	if (exportOptions.suppressRcpHook !== true)
-		core.rcp.dispatchHook('HOOK_EXPORT_COMPLETE', manifest);
-	return manifest;
-};
 
 // Register a drop handler for BLP files.
 core.registerDropHandler({
 	ext: ['.blp'],
 	prompt: count => util.format('Export %d textures as %s', count, core.view.config.exportTextureFormat),
-	process: files => exportFiles(files, true)
+	process: files => textureExporter.exportFiles(files, true)
 });
 
 core.events.on('rcp-export-textures', (files, id) => {
 	// RCP should provide an array of fileDataIDs to export.
-	exportFiles(files, false, id);
+	textureExporter.exportFiles(files, false, id);
 });
 
 core.registerLoadFunc(async () => {
@@ -397,10 +300,10 @@ core.registerLoadFunc(async () => {
 		const userSelection = core.view.selectionTextures;
 		if (userSelection.length > 0) {
 			// In most scenarios, we have a user selection to export.
-			await exportFiles(userSelection);
+			await textureExporter.exportFiles(userSelection);
 		} else if (selectedFileDataID > 0) {
 			// Less common, but we might have a direct preview that isn't selected.
-			await exportFiles([selectedFileDataID]); 
+			await textureExporter.exportFiles([selectedFileDataID]); 
 		} else {
 			// Nothing to be exported, show the user an error.
 			core.setToast('info', 'You didn\'t select any files to export; you should do that first.');
@@ -415,7 +318,43 @@ core.registerLoadFunc(async () => {
 
 	// Track when the "Textures" tab is opened.
 	core.events.on('screen-tab-textures', async () => {
-		await loadTextureAtlasData();
+		const needsUnknownTextures = core.view.config.enableUnknownFiles && !hasLoadedUnknownTextures;
+		const needsAtlasData = !hasLoadedAtlasTable && core.view.config.showTextureAtlas;
+		
+		if ((needsUnknownTextures || needsAtlasData) && !core.view.isBusy) {
+			let stepCount = 0;
+			if (needsUnknownTextures)
+				stepCount += 2; // texture file data + unknown textures
+
+			if (needsAtlasData)
+				stepCount += 3; // atlas + regions + parsing
+			
+			const progress = core.createProgress(stepCount);
+			core.view.setScreen('loading');
+			core.view.isBusy++;
+			
+			try {
+				if (needsUnknownTextures) {
+					await progress.step('Loading texture file data...');
+					await progress.step('Loading unknown textures...');
+					await listfile.loadUnknownTextures();
+					hasLoadedUnknownTextures = true;
+				}
+				
+				if (needsAtlasData)
+					await loadTextureAtlasData(progress);
+				
+				core.view.isBusy--;
+				core.view.setScreen('tab-textures');
+				
+			} catch (error) {
+				core.view.isBusy--;
+				core.view.setScreen('tab-textures');
+				log.write('Failed to initialize textures tab: %o', error);
+				core.setToast('error', 'Failed to load texture data. Check the log for details.');
+			}
+		}
+		
 		attachOverlayListener();
 	});
 
@@ -426,9 +365,9 @@ core.registerLoadFunc(async () => {
 
 	// Track when user toggles the "Show Atlas Regions" checkbox.
 	core.view.$watch('config.showTextureAtlas', async () => {
-		await loadTextureAtlasData();
+		await reloadTextureAtlasData();
 		updateTextureAtlasOverlay();
 	});
 });
 
-module.exports = { previewTextureByID, exportFiles };
+module.exports = { previewTextureByID, exportTextureAtlasRegions };

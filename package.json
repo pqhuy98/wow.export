@@ -2,23 +2,11 @@
 	"name": "wow.export-huy-edition",
 	"description": "Export Toolkit for World of Warcraft",
 	"license": "MIT",
-	"version": "0.1.65",
+	"version": "0.2.1",
 	"contributors": [
 		"Kruithne <kruithne@gmail.com> (https://kruithne.net/)",
 		"Marlamin <marlamin@marlamin.com> (https://marlamin.com/)"
 	],
-	"scripts": {
-		"build": "run-script-os",
-		"build:win32": "node build win-x64",
-		"build:linux": "node build linux-x64",
-		"build-debug": "run-script-os",
-		"build-debug:win32": "node build win-x64-debug",
-		"build-debug:linux": "node build linux-x64-debug",
-		"dev": "run-script-os",
-		"dev:win32": "node debug.js",
-		"dev:linux": "xvfb-run node debug.js",
-		"test": "node tests/index.js"
-	},
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/Kruithne/wow.export.git"
@@ -28,28 +16,15 @@
 	},
 	"homepage": "https://github.com/Kruithne/wow.export#readme",
 	"engines": {
-		"node": ">=12.12.0"
+		"bun": ">=1.2.0"
 	},
 	"dependencies": {
-		"acorn": "^8.0.4",
 		"adm-zip": "git+https://github.com/cthackers/adm-zip.git#ff17ae85000b62b9d159e2520564902724d26c17",
-		"axios": "^1.11.0",
-		"chalk": "^2.4.2",
-		"express": "^4.19.2",
-		"filesize": "^5.0.3",
-		"joi": "^17.13.3",
-		"pkg": "^4.4.0",
 		"rcedit": "^2.0.0",
-		"request": "^2.88.0",
-		"sass": "^1.52.1",
-		"ssh2-sftp-client": "^9.0.4",
-		"tar": "^5.0.10",
-		"terser": "^5.14.2",
-		"uuid": "^3.3.3"
+		"three": "^0.179.1",
+		"vue": "^3.5.21"
 	},
 	"devDependencies": {
-		"eslint": "^6.8.0",
-		"eslint-plugin-vue": "^6.1.2",
-		"run-script-os": "^1.1.6"
+		"@types/bun": "^1.2.21"
 	}
 }

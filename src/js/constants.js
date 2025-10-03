@@ -6,6 +6,7 @@
 
 // This file defines constants used throughout the application.
 const path = require('path');
+const os = require('os');
 
 // Whether or not we're currently unit testing
 const isUnitTest = typeof nw === 'undefined';
@@ -14,6 +15,21 @@ const INSTALL_PATH = isUnitTest ? process.cwd() : path.dirname(process.execPath)
 const DATA_PATH = isUnitTest ? "./tests/user_data" : nw.App.dataPath;
 
 const UPDATER_EXT = { win32: '.exe', darwin: '.app' };
+
+const getBlenderBaseDir = () => {
+	const platform = os.platform();
+	const home_dir = os.homedir();
+	
+	switch (platform) {
+		case 'win32':
+			return path.join(process.env.APPDATA, 'Blender Foundation', 'Blender');
+		case 'darwin': // macOS
+			return path.join(home_dir, 'Library', 'Application Support', 'Blender');
+		case 'linux':
+		default:
+			return path.join(home_dir, '.config', 'blender');
+	}
+};
 
 module.exports = {
 	INSTALL_PATH, // Path to the application installation.
@@ -36,8 +52,8 @@ module.exports = {
 
 	// Defines Blender constants.
 	BLENDER: {
-		DIR: process.env.APPDATA + '\\Blender Foundation\\Blender', // Blender app-data directory.
-		ADDON_DIR: 'scripts\\addons\\io_scene_wowobj', // Install path for add-ons
+		DIR: getBlenderBaseDir(), // Blender app-data directory (cross-platform).
+		ADDON_DIR: path.join('scripts', 'addons', 'io_scene_wowobj'), // Install path for add-ons
 		LOCAL_DIR: path.join(INSTALL_PATH, 'addon', 'io_scene_wowobj'), // Local copy of our Blender add-on.
 		ADDON_ENTRY: '__init__.py', // Add-on entry point that contains the version.
 		MIN_VER: 2.8 // Minimum version supported by our add-on.
@@ -61,10 +77,12 @@ module.exports = {
 		DIR_INDEXES: path.join(DATA_PATH, 'casc', 'indices'), // Cache for archive indexes.
 		DIR_DATA: path.join(DATA_PATH, 'casc', 'data'), // Cache for single data files.
 		DIR_DBD: path.join(DATA_PATH, 'casc', 'dbd'), // Cache for DBD files.
+		DIR_LISTFILE: path.join(DATA_PATH, 'casc', 'listfile'), // Master listfile cache directory.
 		BUILD_MANIFEST: 'manifest.json', // Build-specific manifest file.
 		BUILD_LISTFILE: 'listfile', // Build-specific listfile file.
 		BUILD_ENCODING: 'encoding', // Build-specific encoding file.
 		BUILD_ROOT: 'root', // Build-specific root file.
+		LISTFILE_DATA: 'listfile.txt', // Master listfile data file.
 		TACT_KEYS: path.join(DATA_PATH, 'tact.json'), // Tact key cache.
 		REALMLIST: path.join(DATA_PATH, 'realmlist.json'), // Realmlist cache.
 	},
@@ -97,7 +115,7 @@ module.exports = {
 	PATCH: {
 		REGIONS: ['eu', 'us', 'kr', 'tw', 'cn'], // Valid CDN regions.
 		DEFAULT_REGION: 'us', // Region which is selected by default.
-		HOST: 'http://%s.patch.battle.net:1119/', // Blizzard patch server host.
+		HOST: 'https://%s.version.battle.net/', // Blizzard patch server host.
 		SERVER_CONFIG: '/cdns', // CDN config file on patch server.
 		VERSION_CONFIG: '/versions' // Versions config file on patch server.
 	},
@@ -135,5 +153,21 @@ module.exports = {
 		{ match: 'RIFF', ext: '.avi' },
 		{ match: 'WDC3', ext: '.db2' },
 		{ match: 'WDC4', ext: '.db2' }
+	],
+
+	// WoW expansion definitions matching data-item IDs used in expansion icons
+	EXPANSIONS: [
+		{ id: 0, name: 'Classic', shortName: 'Classic' },
+		{ id: 1, name: 'The Burning Crusade', shortName: 'TBC' },
+		{ id: 2, name: 'Wrath of the Lich King', shortName: 'WotLK' },
+		{ id: 3, name: 'Cataclysm', shortName: 'Cataclysm' },
+		{ id: 4, name: 'Mists of Pandaria', shortName: 'MoP' },
+		{ id: 5, name: 'Warlords of Draenor', shortName: 'WoD' },
+		{ id: 6, name: 'Legion', shortName: 'Legion' },
+		{ id: 7, name: 'Battle for Azeroth', shortName: 'BfA' },
+		{ id: 8, name: 'Shadowlands', shortName: 'SL' },
+		{ id: 9, name: 'Dragonflight', shortName: 'DF' },
+		{ id: 10, name: 'The War Within', shortName: 'TWW' },
+		{ id: 11, name: 'Midnight', shortName: 'Midnight' }
 	]
 };

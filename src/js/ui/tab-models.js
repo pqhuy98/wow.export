@@ -14,8 +14,10 @@ const constants = require('../constants');
 const EncryptionError = require('../casc/blte-reader').EncryptionError;
 const BLPFile = require('../casc/blp');
 
+const DBModelFileData = require('../db/caches/DBModelFileData');
 const DBItemDisplays = require('../db/caches/DBItemDisplays');
 const DBCreatures = require('../db/caches/DBCreatures');
+const WDCReader = require('../db/WDCReader');
 
 const M2Renderer = require('../3D/renderers/M2Renderer');
 const M3Renderer = require('../3D/renderers/M3Renderer');
@@ -26,7 +28,11 @@ const WMORenderer = require('../3D/renderers/WMORenderer');
 const WMOExporter = require('../3D/exporters/WMOExporter');
 
 const textureRibbon = require('./texture-ribbon');
-// const AnimMapper = require('../3D/AnimMapper');
+const textureExporter = require('./texture-exporter');
+const uvDrawer = require('./uv-drawer');
+const AnimMapper = require('../3D/AnimMapper');
+const CameraBounding = require('../3D/camera/CameraBounding');
+const { initCaches } = require('../db/caches/init-cache');
 
 const MODEL_TYPE_M3 = Symbol('modelM3');
 const MODEL_TYPE_M2 = Symbol('modelM2');
@@ -40,8 +46,6 @@ const exportExtensions = {
 const activeSkins = new Map();
 let selectedVariantTextureIDs = new Array();
 let selectedSkinName = null;
-
-let isFirstModel = true;
 
 let camera, scene, grid;
 const renderGroup = new THREE.Group();
@@ -68,6 +72,51 @@ const getModelDisplays = (fileDataID) => {
  */
 const clearTexturePreview = () => {
 	core.view.modelTexturePreviewURL = '';
+	core.view.modelTexturePreviewUVOverlay = '';
+	core.view.modelViewerUVLayers = [];
+};
+
+/**
+ * Initialize UV layers for the current model.
+ */
+const initializeUVLayers = () => {
+	if (!activeRenderer || !activeRenderer.getUVLayers) {
+		core.view.modelViewerUVLayers = [];
+		return;
+	}
+
+	const uvLayerData = activeRenderer.getUVLayers();
+	core.view.modelViewerUVLayers = [
+		{ name: 'UV Off', data: null, active: true },
+		...uvLayerData.layers
+	];
+};
+
+/**
+ * Toggle UV layer visibility.
+ * @param {string} layerName - Name of the UV layer to toggle
+ */
+const toggleUVLayer = (layerName) => {
+	const layer = core.view.modelViewerUVLayers.find(l => l.name === layerName);
+	if (!layer)
+		return;
+
+	core.view.modelViewerUVLayers.forEach(l => {
+		l.active = (l === layer);
+	});
+
+	if (layerName === 'UV Off' || !layer.data) {
+		core.view.modelTexturePreviewUVOverlay = '';
+	} else if (activeRenderer && activeRenderer.getUVLayers) {
+		const uvLayerData = activeRenderer.getUVLayers();
+		const overlayDataURL = uvDrawer.generateUVLayerDataURL(
+			layer.data,
+			core.view.modelTexturePreviewWidth,
+			core.view.modelTexturePreviewHeight,
+			uvLayerData.indices
+		);
+		core.view.modelTexturePreviewUVOverlay = overlayDataURL;
+	}
 };
 
 /**
@@ -92,6 +141,9 @@ const previewTextureByID = async (fileDataID, name) => {
 		view.modelTexturePreviewWidth = blp.width;
 		view.modelTexturePreviewHeight = blp.height;
 		view.modelTexturePreviewName = name;
+
+		// Initialize UV layers when texture preview is shown
+		initializeUVLayers();
 
 		core.hideToast();
 	} catch (e) {
@@ -173,7 +225,9 @@ const previewModel = async (fileName) => {
 	core.view.modelViewerSkins = [];
 	core.view.modelViewerSkinsSelection = [];
 
+	// Reset animation selection.
 	core.view.modelViewerAnims = [];
+	core.view.modelViewerAnimSelection = null;
 
 	try {
 		// Dispose the currently active renderer.
@@ -222,20 +276,32 @@ const previewModel = async (fileName) => {
 
 			core.view.modelViewerSkinsSelection = core.view.modelViewerSkins.slice(0, 1);
 
-			// if (fileNameLower.endsWith('.m2')) {
-			// 	const animList = [];
+			if (fileNameLower.endsWith('.m2')) {
+				const animList = [];
 
-			// 	for (const animationID of Array.from(new Set(activeRenderer.m2.animations.map((animation) => animation.id))).sort())
-			// 		animList.push({ id: animationID, label: AnimMapper.get_anim_name(animationID) });
+				for (let i = 0; i < activeRenderer.m2.animations.length; i++) {
+					const animation = activeRenderer.m2.animations[i];
+					animList.push({ 
+						id: `${Math.floor(animation.id)}.${animation.variationIndex}`, // unique key
+						animationId: animation.id, // original ID for lookup
+						m2Index: i, // actual M2 animation index
+						label: AnimMapper.get_anim_name(animation.id) + " (" + Math.floor(animation.id) + "." + animation.variationIndex + ")"
+					});
+				}
+					
+				const finalAnimList = [
+					{ id: 'none', label: 'None', m2Index: -1 },
+					...animList
+				];
 				
-			// 	core.view.modelViewerAnims = animList;
-			// 	core.view.modelViewerAnimSelection = animList.slice(0, 1);
-			// }
+				core.view.modelViewerAnims = finalAnimList;
+				core.view.modelViewerAnimSelection = 'none';
+			}
 		} else if (isM3) {
 			// TODO: M3
 		}
 
-		updateCameraBounding();
+		CameraBounding.fitObjectInView(renderGroup, camera, core.view.modelViewerContext.controls);
 
 		activePath = fileName;
 
@@ -259,38 +325,6 @@ const previewModel = async (fileName) => {
 	core.view.isBusy--;
 };
 
-/**
- * Update the camera to match render group bounding.
- */
-const updateCameraBounding = () => {
-	// Get the bounding box for the model.
-	const boundingBox = new THREE.Box3();
-	boundingBox.setFromObject(renderGroup);
-
-	// Calculate center point and size from bounding box.
-	const center = boundingBox.getCenter(new THREE.Vector3());
-	const size = boundingBox.getSize(new THREE.Vector3());
-
-	const maxDim = Math.max(size.x, size.y, size.z);
-	const fov = camera.fov * (Math.PI / 180);
-	let cameraZ = (Math.abs(maxDim / 4 * Math.tan(fov * 2))) * 6;
-
-	if (isFirstModel || core.view.modelViewerAutoAdjust) {
-		camera.position.set(center.x, center.y, cameraZ);
-		isFirstModel = false;
-	}
-
-	const minZ = boundingBox.min.z;
-	const cameraToFarEdge = (minZ < 0) ? -minZ + cameraZ : cameraZ - minZ;
-
-	camera.updateProjectionMatrix();
-
-	const controls = core.view.modelViewerContext.controls;
-	if (controls) {
-		controls.target = center;
-		controls.maxDistance = cameraToFarEdge * 2;
-	}
-};
 
 /**
  * Resolves variant texture IDs based on user selection.
@@ -383,6 +417,7 @@ const buildGeosetMaskForSkin = async (exporter, skin) => {
  * @param {number} exportID Export ID for tracking
  */
 const exportFilesWithSkins = async (models, isLocal = false, exportID = -1, options = {}) => {
+	await Promise.all(initCaches());
 	const exportOptions = options || {};
 	const configSnapshot = Object.freeze({ ...core.view.config });
 	const exportPaths = exportOptions.useExportPathsStream === false ? null : core.openLastExportStream();
@@ -399,7 +434,11 @@ const exportFilesWithSkins = async (models, isLocal = false, exportID = -1, opti
 			
 			if (format === 'PNG') {
 				const exportPath = ExportHelper.getExportPath(activePath);
-				const outFile = ExportHelper.replaceExtension(exportPath, '.png');
+				let outFile = ExportHelper.replaceExtension(exportPath, '.png');
+				
+				if (core.view.config.modelsExportPngIncrements)
+					outFile = await ExportHelper.getIncrementalFilename(outFile);
+				
 				const outDir = path.dirname(outFile);
 
 				await buf.writeToFile(outFile);
@@ -674,24 +713,70 @@ core.registerDropHandler({
 	process: files => exportFiles(files, true)
 });
 
-// The first time the user opens up the model tab, initialize 3D preview.
-core.events.once('screen-tab-models', () => {
-	camera = new THREE.PerspectiveCamera(70, undefined, 0.01, 2000);
+// The first time the user opens up the model tab, initialize model data and 3D preview.
+core.events.once('screen-tab-models', async () => {
+	// Calculate loading steps based on configuration
+	let stepCount = 2; // Base: model file data + 3D initialization
+	if (core.view.config.enableUnknownFiles) stepCount++;
+	if (core.view.config.enableM2Skins) stepCount += 2; // Item displays + creature data
+	
+	// Show loading screen
+	const progress = core.createProgress(stepCount);
+	core.view.setScreen('loading');
+	core.view.isBusy++;
 
-	scene = new THREE.Scene();
-	const light = new THREE.HemisphereLight(0xffffff, 0x080820, 1);
-	scene.add(light);
-	scene.add(renderGroup);
+	try {
+		// Load model file data
+		await progress.step('Loading model file data...');
+		await DBModelFileData.initializeModelFileData();
 
-	grid = new THREE.GridHelper(100, 100, 0x57afe2, 0x808080);
+		// Load unknown model files if enabled
+		if (core.view.config.enableUnknownFiles) {
+			await progress.step('Loading unknown models...');
+			await listfile.loadUnknownModels();
+		}
 
-	if (core.view.config.modelViewerShowGrid)
-		scene.add(grid);
+		// Load M2 skins data if enabled
+		if (core.view.config.enableM2Skins) {
+			await progress.step('Loading item displays...');
+			await DBItemDisplays.initializeItemDisplays();
 
-	// WoW models are by default facing the wrong way; rotate everything.
-	renderGroup.rotateOnAxis(new THREE.Vector3(0, 1, 0), -90 * (Math.PI / 180));
+			await progress.step('Loading creature data...');
+			await DBCreatures.initializeCreatureData();
+		}
 
-	core.view.modelViewerContext = Object.seal({ camera, scene, controls: null });
+		// Initialize 3D preview
+		await progress.step('Initializing 3D preview...');
+		camera = new THREE.PerspectiveCamera(70, undefined, 0.01, 2000);
+
+		scene = new THREE.Scene();
+		const light = new THREE.HemisphereLight(0xffffff, 0x080820, 3);
+		scene.add(light);
+		scene.add(renderGroup);
+
+		if (core.view.config.modelViewerShowBackground)
+			scene.background = new THREE.Color(core.view.config.modelViewerBackgroundColor);
+
+		grid = new THREE.GridHelper(100, 100, 0x57afe2, 0x808080);
+
+		if (core.view.config.modelViewerShowGrid)
+			scene.add(grid);
+
+		// WoW models are by default facing the wrong way; rotate everything.
+		renderGroup.rotateOnAxis(new THREE.Vector3(0, 1, 0), -90 * (Math.PI / 180));
+
+		core.view.modelViewerContext = Object.seal({ camera, scene, controls: null });
+
+		// Loading complete, return to models tab
+		core.view.isBusy--;
+		core.view.setScreen('tab-models');
+		
+	} catch (error) {
+		core.view.isBusy--;
+		core.view.setScreen('tab-models');
+		log.write('Failed to initialize models tab: %o', error);
+		core.setToast('error', 'Failed to initialize models tab. Check the log for details.');
+	}
 });
 
 core.events.on('rcp-export-models', (models, id) => {
@@ -754,11 +839,47 @@ core.registerLoadFunc(async () => {
 		activeRenderer.applyReplaceableTextures(display);
 	});
 
+	core.view.$watch('modelViewerAnimSelection', async selectedAnimationId => {
+		if (!activeRenderer || !activeRenderer.playAnimation || core.view.modelViewerAnims.length === 0)
+			return;
+
+		if (selectedAnimationId !== null && selectedAnimationId !== undefined) {
+			if (selectedAnimationId === 'none') {
+				activeRenderer?.stopAnimation?.();
+
+				if (core.view.modelViewerAutoAdjust)
+					requestAnimationFrame(() => CameraBounding.fitObjectInView(renderGroup, camera, core.view.modelViewerContext.controls));
+				return;
+			}
+
+			const animInfo = core.view.modelViewerAnims.find(anim => anim.id == selectedAnimationId);
+			if (animInfo && animInfo.m2Index !== undefined && animInfo.m2Index >= 0) {
+				log.write(`Playing animation ${selectedAnimationId} at M2 index ${animInfo.m2Index}`);
+				activeRenderer.playAnimation(animInfo.m2Index);
+
+				if (core.view.modelViewerAutoAdjust)
+					requestAnimationFrame(() => CameraBounding.fitObjectInView(renderGroup, camera, core.view.modelViewerContext.controls));
+			}
+		}
+	});
+
 	core.view.$watch('config.modelViewerShowGrid', () => {
 		if (core.view.config.modelViewerShowGrid)
 			scene.add(grid);
 		else
 			scene.remove(grid);
+	});
+
+	core.view.$watch('config.modelViewerShowBackground', () => {
+		if (core.view.config.modelViewerShowBackground)
+			scene.background = new THREE.Color(core.view.config.modelViewerBackgroundColor);
+		else
+			scene.background = null;
+	});
+
+	core.view.$watch('config.modelViewerBackgroundColor', () => {
+		if (core.view.config.modelViewerShowBackground)
+			scene.background = new THREE.Color(core.view.config.modelViewerBackgroundColor);
 	});
 
 	// Track selection changes on the model listbox and preview first model.
@@ -788,10 +909,21 @@ core.registerLoadFunc(async () => {
 
 		await exportFiles(userSelection, false);
 	});
+
+	// Track when the user clicks to toggle UV layer.
+	core.events.on('toggle-uv-layer', (layerName) => {
+		toggleUVLayer(layerName);
+	});
+
+	// Track when the user clicks to export a texture from the ribbon.
+	core.events.on('click-export-ribbon-texture', async (fileDataID, displayName) => {
+		await textureExporter.exportSingleTexture(fileDataID);
+	});
+
 });
 
-// Expose a REST-friendly export entrypoint that avoids RCP.
 module.exports = {
+	getActiveRenderer: () => activeRenderer,
 	exportFilesWithSkins,
 	getAllSkinsForModel
 };

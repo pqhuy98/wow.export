@@ -11,11 +11,11 @@ console.log = (...args) => {
 	log.write(...args);
 };
 
-// BUILD_RELEASE will be set globally by Terser during bundling allowing us
-// to discern a production build. However, for debugging builds it will throw
-// a ReferenceError without the following check. Any code that only runs when
-// BUILD_RELEASE is set to false will be removed as dead-code during compile.
-BUILD_RELEASE = typeof BUILD_RELEASE !== 'undefined';
+// BUILD_RELEASE will be set by the bundler during production builds allowing us
+// to discern a production build. For debugging builds, process.env.BUILD_RELEASE
+// will be undefined. Any code that only runs when BUILD_RELEASE is false will
+// be removed as dead-code during compile.
+BUILD_RELEASE = process.env.BUILD_RELEASE === 'true';
 
 /**
  * crash() is used to inform the user that the application has exploded.
@@ -76,6 +76,11 @@ if (!BUILD_RELEASE) {
 process.on('unhandledRejection', e => crash('ERR_UNHANDLED_REJECTION', e.message));
 process.on('uncaughtException', e => crash('ERR_UNHANDLED_EXCEPTION', e.message));
 
+const win = nw.Window.get();
+// Launch DevTools for debug builds.
+if (!BUILD_RELEASE)
+	win.showDevTools();
+
 // Imports
 const os = require('os');
 const path = require('path');
@@ -84,6 +89,7 @@ const generics = require('./js/generics');
 const updater = require('./js/updater');
 const core = require('./js/core');
 const listfile = require('./js/casc/listfile');
+const cdnResolver = require('./js/casc/cdn-resolver');
 const log = require('./js/log');
 const config = require('./js/config');
 const tactKeys = require('./js/casc/tact-keys');
@@ -94,19 +100,28 @@ const ExportHelper = require('./js/casc/export-helper');
 const ExternalLinks = require('./js/external-links');
 const textureRibbon = require('./js/ui/texture-ribbon');
 
-require('./js/components/listbox');
-require('./js/components/listboxb');
-require('./js/components/itemlistbox');
-require('./js/components/checkboxlist');
-require('./js/components/menu-button');
-require('./js/components/file-field');
-require('./js/components/combobox');
-require('./js/components/slider');
-require('./js/components/model-viewer');
-require('./js/components/map-viewer');
-require('./js/components/data-table');
-require('./js/components/resize-layer');
-require('./js/components/context-menu');
+const Vue = require('vue/dist/vue.cjs.js');
+window.Vue = Vue;
+
+const THREE = require('three');
+window.THREE = THREE;
+THREE.ColorManagement.enabled = true;
+
+const Listbox = require('./js/components/listbox');
+const ListboxMaps = require('./js/components/listbox-maps');
+const ListboxZones = require('./js/components/listbox-zones');
+const Listboxb = require('./js/components/listboxb');
+const Itemlistbox = require('./js/components/itemlistbox');
+const Checkboxlist = require('./js/components/checkboxlist');
+const MenuButton = require('./js/components/menu-button');
+const FileField = require('./js/components/file-field');
+const ComboBox = require('./js/components/combobox');
+const Slider = require('./js/components/slider');
+const ModelViewer = require('./js/components/model-viewer');
+const MapViewer = require('./js/components/map-viewer');
+const DataTable = require('./js/components/data-table');
+const ResizeLayer = require('./js/components/resize-layer');
+const ContextMenu = require('./js/components/context-menu');
 
 const TabTextures = require('./js/ui/tab-textures');
 const TabItems = require('./js/ui/tab-items');
@@ -116,6 +131,7 @@ require('./js/ui/tab-videos');
 require('./js/ui/tab-text.js');
 require('./js/ui/tab-models');
 require('./js/ui/tab-maps');
+require('./js/ui/tab-zones');
 require('./js/ui/tab-items');
 require('./js/ui/tab-data');
 require('./js/ui/tab-raw');
@@ -125,7 +141,6 @@ require('./js/ui/tab-characters');
 const RCPServer = require('./js/rcp/rcp-server');
 const RestServer = require('./js/rest/rest-server');
 
-const win = nw.Window.get();
 win.setProgressBar(-1); // Reset taskbar progress in-case it's stuck.
 win.on('close', () => process.exit()); // Ensure we exit when window is closed.
 
@@ -134,17 +149,14 @@ win.on('close', () => process.exit()); // Ensure we exit when window is closed.
 window.ondragover = e => { e.preventDefault(); return false; };
 window.ondrop = e => { e.preventDefault(); return false; };
 
-// Launch DevTools for debug builds.
-if (!BUILD_RELEASE)
-	win.showDevTools();
-
 // Force all links to open in the users default application.
 document.addEventListener('click', function(e) {
-	if (!e.target.matches('[data-external]'))
+	const externalElement = e.target.closest('[data-external]');
+	if (!externalElement)
 		return;
 
 	e.preventDefault();
-	ExternalLinks.open(e.target.getAttribute('data-external'));
+	ExternalLinks.open(externalElement.getAttribute('data-external'));
 });
 
 (async () => {
@@ -155,13 +167,14 @@ document.addEventListener('click', function(e) {
 	// Append the application version to the title bar.
 	document.title += ' v' + nw.App.manifest.version;
 
-	// Interlink error handling for Vue.
-	Vue.config.errorHandler = err => crash('ERR_VUE', err.message);
-
 	// Initialize Vue.
-	core.view = new Vue({
-		el: '#container',
-		data: core.view,
+	const app = Vue.createApp({
+		data() {
+			return core.makeNewView();
+		},
+		created() {
+			core.view = this;
+		},
 		methods: {
 			/**
 			 * Invoked when the user chooses to manually install the Blender add-on.
@@ -277,7 +290,7 @@ document.addEventListener('click', function(e) {
 					if (this.screenStack[0] !== screenID)
 						this.screenStack.unshift(screenID);
 				} else {
-					this.$set(this.screenStack, 0, screenID);
+					this.screenStack[0] = screenID;
 				}
 			},
 
@@ -335,6 +348,7 @@ document.addEventListener('click', function(e) {
 				this.selectedCDNRegion = region;
 				this.lockCDNRegion = true;
 				this.config.sourceSelectUserRegion = region.tag;
+				cdnResolver.startPreResolution(region.tag);
 			},
 
 			/**
@@ -377,6 +391,14 @@ document.addEventListener('click', function(e) {
 			 */
 			onTextureRibbonResize: function(width) {
 				textureRibbon.onResize(width);
+			},
+
+			/**
+			 * Toggle UV layer visibility.
+			 * @param {string} layerName - Name of the UV layer to toggle
+			 */
+			toggleUVLayer: function(layerName) {
+				core.events.emit('toggle-uv-layer', layerName);
 			},
 			
 			/**
@@ -448,8 +470,8 @@ document.addEventListener('click', function(e) {
 			 * Invoked when the user selects the textures button on an item.
 			 * @param {object} item 
 			 */
-			viewTextures: function(item) {
-				TabItems.viewItemTextures(item);
+			viewTextures: async function(item) {
+				await TabItems.viewItemTextures(item);
 			}
 		},
 
@@ -580,6 +602,26 @@ document.addEventListener('click', function(e) {
 		}
 	});
 
+	// Interlink error handling for Vue.
+	app.config.errorHandler = err => crash('ERR_VUE', err.message);
+
+	app.component('Listbox', Listbox);
+	app.component('ListboxMaps', ListboxMaps);
+	app.component('ListboxZones', ListboxZones);
+	app.component('Listboxb', Listboxb);
+	app.component('Itemlistbox', Itemlistbox);
+	app.component('Checkboxlist', Checkboxlist);
+	app.component('MenuButton', MenuButton);
+	app.component('FileField', FileField);
+	app.component('ComboBox', ComboBox);
+	app.component('Slider', Slider);
+	app.component('ModelViewer', ModelViewer);
+	app.component('MapViewer', MapViewer);
+	app.component('DataTable', DataTable);
+	app.component('ResizeLayer', ResizeLayer);
+	app.component('ContextMenu', ContextMenu);
+	app.mount('#container');
+
 	// Log some basic information for potential diagnostics.
 	const manifest = nw.App.manifest;
 	const cpus = os.cpus();
@@ -595,6 +637,8 @@ document.addEventListener('click', function(e) {
 		core.view.config.exportDirectory = path.join(os.homedir(), 'wow.export');
 		log.write('No export directory set, setting to %s', core.view.config.exportDirectory);
 	}
+
+	listfile.preload();
 
 	// Set-up proper drag/drop handlers.
 	let dropStack = 0;

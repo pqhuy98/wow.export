@@ -11,10 +11,14 @@ const DBTextureFileData = require('./DBTextureFileData');
 
 const itemDisplays = new Map();
 
+
 /**
  * Initialize item displays from ItemDisplayInfo.db2
- */
+*/
 const initializeItemDisplays = async () => {
+	if (itemDisplays.size > 0) return;
+	await DBTextureFileData.ensureInitialized();
+	
 	log.write('Loading item textures...');
 	const itemDisplayInfo = new WDCReader('DBFilesClient/ItemDisplayInfo.db2');
 	await itemDisplayInfo.parse();

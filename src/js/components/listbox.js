@@ -5,6 +5,9 @@
  */
 
 const path = require('path');
+const core = require('../core');
+
+const FILTER_DEBOUNCE_MS = 200;
 
 const fid_filter = (e) => {
 	const start = e.indexOf(' [');
@@ -16,7 +19,7 @@ const fid_filter = (e) => {
 	return e;
 };
 
-Vue.component('listbox', {
+module.exports = {
 	/**
 	 * items: Item entries displayed in the list.
 	 * filter: Optional reactive filter for items.
@@ -31,8 +34,10 @@ Vue.component('listbox', {
 	 * unittype: Unit name for what the listbox contains. Used with includefilecount.
 	 * override: If provided, used as an override listfile.
 	 * disable: If provided, used as reactive disable flag.
+	 * persistscrollkey: If provided, enables scroll position persistence with this key.
 	 */
-	props: ['items', 'filter', 'selection', 'single', 'keyinput', 'regex', 'copymode', 'pasteselection', 'copytrimwhitespace', 'includefilecount', 'unittype', 'override', 'disable'],
+	props: ['items', 'filter', 'selection', 'single', 'keyinput', 'regex', 'copymode', 'pasteselection', 'copytrimwhitespace', 'includefilecount', 'unittype', 'override', 'disable', 'persistscrollkey'],
+	emits: ['update:selection'],
 
 	/**
 	 * Reactive instance data.
@@ -43,7 +48,10 @@ Vue.component('listbox', {
 			scrollRel: 0,
 			isScrolling: false,
 			slotCount: 1,
-			lastSelectItem: null
+			lastSelectItem: null,
+			debouncedFilter: null,
+			filterTimeout: null,
+			scrollPositionRestored: false
 		}
 	},
 
@@ -69,13 +77,31 @@ Vue.component('listbox', {
 		// Register observer for layout changes.
 		this.observer = new ResizeObserver(() => this.resize());
 		this.observer.observe(this.$refs.root);
+
+		this.debouncedFilter = this.filter;
+
+		if (this.persistscrollkey) {
+			this.$nextTick(() => {
+				const saved_state = core.getScrollPosition(this.persistscrollkey);
+				if (saved_state && this.filteredItems.length > 0) {
+					this.scrollRel = saved_state.scrollRel || 0;
+					this.scroll = (this.$refs.root.clientHeight - (this.$refs.scroller.clientHeight)) * this.scrollRel;
+					this.recalculateBounds();
+				}
+			});
+		}
 	},
 
 	/**
 	 * Invoked when the component is destroyed.
 	 * Used to unregister global mouse listeners and resize observer.
 	 */
-	beforeDestroy: function() {
+	beforeUnmount: function() {
+		// Save final scroll position if persistence is enabled
+		if (this.persistscrollkey) 
+			core.saveScrollPosition(this.persistscrollkey, this.scrollRel, this.scrollIndex);
+		
+
 		// Unregister global mouse/keyboard listeners.
 		document.removeEventListener('mousemove', this.onMouseMove);
 		document.removeEventListener('mouseup', this.onMouseUp);
@@ -87,6 +113,33 @@ Vue.component('listbox', {
 
 		// Disconnect resize observer.
 		this.observer.disconnect();
+
+		clearTimeout(this.filterTimeout);
+	},
+
+	watch: {
+		filter: function(newFilter) {
+			clearTimeout(this.filterTimeout);
+
+			this.filterTimeout = setTimeout(() => {
+				this.debouncedFilter = newFilter;
+				this.filterTimeout = null;
+			}, FILTER_DEBOUNCE_MS);
+		},
+
+		filteredItems: function(newItems) {
+			if (this.persistscrollkey && newItems.length > 0) {
+				this.$nextTick(() => {
+					const saved_state = core.getScrollPosition(this.persistscrollkey);
+					if (saved_state && !this.scrollPositionRestored) {
+						this.scrollRel = saved_state.scrollRel || 0;
+						this.scroll = (this.$refs.root.clientHeight - (this.$refs.scroller.clientHeight)) * this.scrollRel;
+						this.recalculateBounds();
+						this.scrollPositionRestored = true;
+					}
+				});
+			}
+		}
 	},
 
 	computed: {
@@ -117,34 +170,40 @@ Vue.component('listbox', {
 
 		/**
 		 * Reactively filtered version of the underlying data array.
-		 * Automatically refilters when the filter input is changed.
+		 * Uses debounced filter to prevent UI stuttering on large datasets.
 		 */
 		filteredItems: function() {
 			// Skip filtering if no filter is set.
-			if (!this.filter)
+			if (!this.debouncedFilter)
 				return this.itemList;
 
 			let res = this.itemList;
 
 			if (this.regex) {
 				try {
-					const filter = new RegExp(this.filter.trim(), 'i');
+					const filter = new RegExp(this.debouncedFilter.trim(), 'i');
 					res = res.filter(e => e.match(filter));
 				} catch (e) {
 					// Regular expression did not compile, skip filtering.
 				}
 			} else {
-				const filter = this.filter.trim().toLowerCase();
+				const filter = this.debouncedFilter.trim().toLowerCase();
 				if (filter.length > 0)
 					res = res.filter(e => e.toLowerCase().includes(filter));
 			}
 
-			// Remove anything from the user selection that has now been filtered out.
-			// Iterate backwards here due to re-indexing as elements are spliced.
-			for (let i = this.selection.length - 1; i >= 0; i--) {
-				if (!res.includes(this.selection[i]))
-					this.selection.splice(i, 1);
-			}
+			let hasChanges = false;
+			const newSelection = this.selection.filter((item) => {
+				const includes = res.includes(item);
+
+				if (!includes)
+					hasChanges = true;
+
+				return includes;
+			});
+
+			if (hasChanges)
+				this.$emit('update:selection', newSelection);
 
 			return res;
 		},
@@ -183,6 +242,9 @@ Vue.component('listbox', {
 			const max = this.$refs.root.clientHeight - (this.$refs.scroller.clientHeight);
 			this.scroll = Math.min(max, Math.max(0, this.scroll));
 			this.scrollRel = this.scroll / max;
+			
+			if (this.persistscrollkey)
+				core.saveScrollPosition(this.persistscrollkey, this.scrollRel, this.scrollIndex);
 		},
 
 		/**
@@ -227,8 +289,10 @@ Vue.component('listbox', {
 
 			// Replace the current selection with one from the clipboard.
 			const entries = e.clipboardData.getData('text').split(/\r?\n/).filter(i => this.itemList.includes(i));
-			this.selection.splice(0);
-			this.selection.push(...entries);
+			const newSelection = this.selection.slice();
+			newSelection.splice(0);
+			newSelection.push(...entries);
+			this.$emit('update:selection', newSelection);
 		},
 
 		/**
@@ -240,7 +304,9 @@ Vue.component('listbox', {
 			const child = this.$refs.root.querySelector('.item');
 
 			if (child !== null) {
-				const scrollCount = Math.floor(this.$refs.root.clientHeight / child.clientHeight);
+				const scrollCount = core.view.config.scrollSpeed === 0 ?  
+					Math.floor(this.$refs.root.clientHeight / child.clientHeight) : 
+					core.view.config.scrollSpeed;
 				const direction = e.deltaY > 0 ? 1 : -1;
 				this.scroll += ((scrollCount * this.itemWeight) * weight) * direction;
 				this.recalculateBounds();
@@ -263,7 +329,7 @@ Vue.component('listbox', {
 
 			if (e.key === 'c' && e.ctrlKey) {
 				// Copy selection to clipboard.
-				let entries = this.selection;
+				let entries = this.selection.slice();
 				if (this.copymode == 'DIR')
 					entries = entries.map(e => path.dirname(e));
 				else if (this.copymode == 'FID')
@@ -300,11 +366,14 @@ Vue.component('listbox', {
 							this.recalculateBounds();
 						}
 
-						if (!e.shiftKey || this.single)
-							this.selection.splice(0);
+						const newSelection = this.selection.slice();
 
-						this.selection.push(next);
+						if (!e.shiftKey || this.single)
+							newSelection.splice(0);
+
+						newSelection.push(next);
 						this.lastSelectItem = next;
+						this.$emit('update:selection', newSelection);
 					}
 				}
 			}
@@ -320,12 +389,13 @@ Vue.component('listbox', {
 				return;
 			
 			const checkIndex = this.selection.indexOf(item);
+			const newSelection = this.selection.slice();
 
 			if (this.single) {
 				// Listbox is in single-entry mode, replace selection.
 				if (checkIndex === -1) {
-					this.selection.splice(0);
-					this.selection.push(item);
+					newSelection.splice(0);
+					newSelection.push(item);
 				}
 
 				this.lastSelectItem = item;
@@ -333,9 +403,9 @@ Vue.component('listbox', {
 				if (event.ctrlKey) {
 					// Ctrl-key held, so allow multiple selections.
 					if (checkIndex > -1)
-						this.selection.splice(checkIndex, 1);
+						newSelection.splice(checkIndex, 1);
 					else
-						this.selection.push(item);
+						newSelection.push(item);
 				} else if (event.shiftKey) {
 					// Shift-key held, select a range.
 					if (this.lastSelectItem && this.lastSelectItem !== item) {
@@ -347,18 +417,20 @@ Vue.component('listbox', {
 						const range = this.filteredItems.slice(lowest, lowest + delta + 1);
 
 						for (const select of range) {
-							if (this.selection.indexOf(select) === -1)
-								this.selection.push(select);
+							if (newSelection.indexOf(select) === -1)
+								newSelection.push(select);
 						}
 					}				
-				} else if (checkIndex === -1 || (checkIndex > -1 && this.selection.length > 1)) {
+				} else if (checkIndex === -1 || (checkIndex > -1 && newSelection.length > 1)) {
 					// Normal click, replace entire selection.
-					this.selection.splice(0);
-					this.selection.push(item);
+					newSelection.splice(0);
+					newSelection.push(item);
 				}
 
 				this.lastSelectItem = item;
 			}
+
+			this.$emit('update:selection', newSelection);
 		}
 	},
 
@@ -372,4 +444,4 @@ Vue.component('listbox', {
 		</div>
 	</div>
 	<div class="list-status" v-if="unittype">{{ filteredItems.length }} {{ unittype + (filteredItems.length != 1 ? 's' : '') }} found. {{ selection.length > 0 ? ' (' + selection.length + ' selected)' : '' }}</div></div>`
-});
+};

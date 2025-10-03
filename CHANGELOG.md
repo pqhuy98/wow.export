@@ -1,22 +1,100 @@
-0.1.65 (31-12-2024)
+## 0.2.1 (01-10-2025)
+- Fixed an issue that caused the auto-updater to not restart wow.export after updating (update: this did not fix it, might still happen until next update).
+
+## 0.2.0 (01-10-2025)
+wow.export's first update of the year is a big one and with that there's a bunch of new features as well as various improvements, changes and fixes. Please note that some newer features might still be rough around the edges, we expect there to be another update in the next few months that improves these and also adds support for any changes Midnight Alpha might bring.
+
+### General/features
+- Added animation previews to the built-in modelviewer (work in progress, many don't preview correctly yet).
+- Added "Import Liquids" to Blender add-on, fully supporting all liquid types on map tiles.
+- Added "Export Heightmaps" button for maps, allowing 16-bit/32-bit heightmap generation with cross-tile range relativity.
+- Added "Show Background" option to set a customizable background colour to the model viewer.
+- Added partial support for M3 models (geometry only).
+- Map selections can now be exported as stitched PNG images - including the whole map!
+- Exported PNG images now properly utilize Sub, Up, Average and Paeth filters, resulting in better compression.
+- Added UV layer inspection on the model-viewer. Preview a texture from the ribbon and choose a UV layer to overlay.
+- Model textures can now be exported directly from the texture ribbon when previewing a model.
+- Importing M2 models into Blender using the wow.export add-on now correctly handles transparency and other basic shader settings (requires exported metadata).
+- Added UV animation support to the wow.export Blender add-on (requires exported metadata).
+- Added "Show Bones" option to preview model armature in the model viewer.
+- Maps can now be filtered by expansion using expansion icons above the map list.
+- Added "Zones" tab which allows you to view all zones within the game.
+
+### Data Tables (work in progress)
+- Added "Data" tab that allows you to view data tables within the client!
+- Per-column data table filtering e.g id:5000 name:"test name" (supports regex).
+- Search icon on column headers enables quick per-column filtering.
+- Sort icon on column headers enables per-column sorting.
+- Data tables can be exported as CSV files (either whole, or based on a selection).
+
+### Loading
+- wow.export now only loads data that is necessary on startup. Individual tabs will now incur smaller mini-loading screens as data is required. This reduces initial load times by 30+ seconds and decreases overall memory usage for most users.
+- Remote CDN hosts are now speculatively pre-resolved, reducing load times.
+- Listfiles are pre-loaded and filtered ahead-of-time, reducing load times.
+- Unknown sounds are no longer pre-loaded, reducing load times.
+- Texture file data is no longer pre-loaded, reducing load times.
+- Model file, creature and item data is no longer pre-loaded, reducing load times.
+
+### Settings
+- Added option that controls the inclusion of prefix bones in glTF exports (thanks thunderysteak!).
+- Added option that controls the amount of scroll lines, default is 4 which should make scrolling smoother (thanks NoodleBug!).
+- Added option to the Blender addon to create collections for WMO doodad sets (thanks KiaArmani!).
+- Added option to prefix 3D preview exports to prevent overwrite (enabled by default).
+- Metadata exports for M2 and WMOs are now enabled by default.
+- Listfile URL no longer supports build wildcard (long unsupported by official endpoints).
+- Added "Name Exported File" option which can be disabled to export using fileDataIDs as filenames.
+
+### UI
+- Added expansion icon for Midnight.
+- Search inputs are now debounced, preventing UI stuttering when typing.
+- Changing tab (Models, Textures, etc) no longer resets your scroll position.
+- Map viewer can now zoom out two additional levels.
+
+### Technical
+- Map viewer no longer keeps map tiles in memory, dramatically improving memory usage.
+- Exported CSV files (data tables, model placement, etc) now escape special characters.
+
+### Cross-platform support
+- Started generating builds for Linux & MacOS (still a work in progress, not yet finished).
+- Added cross-platform support for Linux & MacOS into updater application.
+- Blender add-on installation now supports Linux & MacOS.
+
+### Fixes
+- Fixed issue with WMO textures being incorrectly assigned in glTF exports.
+- Fixed issue causing cyclic glTF animations have incorrect frame ranges.
+- Fixed issue that prevented terrain exported with texture quality "None" from being importable due to referencing missing textures.
+- Fixed issue that caused MH2O bitmaps in advanced data to be incorrect.
+- Fixed issue that preventing texture previews on the model viewer from working.
+- Fixed issue causing terrain UV maps to be non-normalized causing visible seams.
+- Fixed issue that caused model viewer camera to not properly show the model in frame.
+- Fixed issue that caused panning on larger models to be slow and difficult.
+
+### Internal
+- Updated three.js from r111 to r179 (some color changes might be observed in model previews).
+- Updated Battle.net patch service URLs.
+- Updated to Vue 3.5.21.
+- Replaced pkg dependency for building updater with bun to eliminate cross-platform issues.
+- Removed build dependencies node, acorn, terser, filesize, chalk, request, tar, ssh2-sftp-client, eslint and sass.
+
+## 0.1.65 (31-12-2024)
 - Added option to view and export texture atlas regions from the texture viewer.
 - Added support for newer root manifest format introduced 11.1+.
 - Added patch region for China.
 
-0.1.64 (21-07-2024)
+## 0.1.64 (21-07-2024)
 - Fix issue with exports not starting for some users due to an issue introduced in 0.1.62.
 
-0.1.63 (20-07-2024)
+## 0.1.63 (20-07-2024)
 - Added more verbose logging for required downloads during loading to hopefully figure out why some users are having issues.
 
-0.1.62 (19-07-2024)
+## 0.1.62 (19-07-2024)
 - Added warning for users who set the last export file as a directory.
 - Fixed issue with raw map exports skipping certain WMOs.
 
-0.1.61 (16-07-2024)
+## 0.1.61 (16-07-2024)
 - Fixed issue with raw WMO exports failing due to missing LOD groups.
 
-0.1.60 (15-07-2024)
+## 0.1.60 (15-07-2024)
 - Added exporting of .skel files and files referenced by .skel files for raw M2 exports.
 - Added exporting of WMO LOD groups for raw WMO exports.
 - Added exporting of other WDT files for raw map exports.
@@ -34,7 +112,7 @@
 - Fixed issue that caused geoset control in the Models and Character tabs to be linked.
 - Fixed issue that caused wow.export to run out of memory when exporting incredibly large WMOs.
 
-0.1.59 (29-02-2024)
+## 0.1.59 (29-02-2024)
 - Initial support for exporting textured character models and their customizations to glTF. Some customizations are not yet supported.
   Note: Please see the pinned issue on top of our GitHub issues page for known issues/requests before reporting a bug/making a suggestion.
 - New and improved 3D camera controls in the model viewer.
@@ -43,7 +121,7 @@
 - Added expansion icon for The War Within.
 - Improved default geoset selection.
 
-0.1.58 (11-02-2024)
+## 0.1.58 (11-02-2024)
 - M2 models can now be exported with all their animations when using glTF. (Beta feature)
 - Added additional bone names for non-keybone bones.
 - Added optional setting (disabled by default) to also display unnamed/unknown items in the "Items" tab.
@@ -53,57 +131,57 @@
 - Improved performance when loading models for previewing while "Show Textures" is disabled.
   Note: When enabling the "Show Textures" checkbox a reload of the model is needed for textures to appear.
 
-0.1.57 (25-01-2024)
+## 0.1.57 (25-01-2024)
 - M2 models can now be exported in the glTF format (complete with armature)! 🎉
 - WMO models can now be exported in glTF format (does not support doodads).
 - Fixed issue with models added since 9.2+ not containing names.
 
 ⭐ [Special thank you to Kathen for contributions in 0.1.57]
 
-0.1.56 (20-01-2024)
+## 0.1.56 (20-01-2024)
 - Blender add-on fix (make sure to update the addon).
 
-0.1.55 (19-01-2024)
+## 0.1.55 (19-01-2024)
 - Updated default listfile, encryption key and data definition downloads to come from GitHub.
 - Fixed fallbacks for listfile, encryption key and data definition downloads.
 - Fixed long material names crashing Blender imports (make sure to update the addon).
 - Fixed unnecessary log message always being logged during listfile parsing.
 
-0.1.54 (09-12-2023)
+## 0.1.54 (09-12-2023)
 - Fixed loading of 10.2.5 installations by adding WDC5 support for DB2 files.
 
-0.1.53 (05-12-2023)
+## 0.1.53 (05-12-2023)
 - Fixed an issue that caused wow.export to crash on startup.
 
-0.1.52 (05-12-2023)
+## 0.1.52 (05-12-2023)
 - Updated add-on to support Blender 4.0.
 
-0.1.51 (25-09-2023)
+## 0.1.51 (25-09-2023)
 - Added fallback URLs for listfile, encryption key and data definition downloads.
 - Added support for HTTP 302 redirects when downloading files.
 - Added logging of listfile download failure reason.
 
-0.1.50 (17-08-2023)
+## 0.1.50 (17-08-2023)
 - Fixed loading of 10.1.7 installations after Blizzard changed something.
 
-0.1.49 (23-05-2023)
+## 0.1.49 (23-05-2023)
 - Added mainline PTR 2 to the product list.
 - Added file type detection for .anim (2x), .bls, .tex, .avi and .db2.
 - Added exporting of OBJ1/LOD ADT files for raw map exports.
 - Fixed an issue that broke unknown file type detection in the raw files tab.
 - Fixed an issue where unknown files would fail to export.
 
-0.1.48 (10-03-2023)
+## 0.1.48 (10-03-2023)
 - Adds preliminary support for reading DB2 tables in 10.1+.
 
-0.1.47 (23-01-2023)
+## 0.1.47 (23-01-2023)
 - Fixes an issue with DB2 reading for certain DB2 tables.
 
-0.1.46 (23-01-2023)
+## 0.1.46 (23-01-2023)
 - Fixes an issue that causes M2 models exported as part of an ADT to have the wrong file extension.
 - Removed China as a supported region, as the CDN is no longer available.
 
-0.1.45 (22-01-2023)
+## 0.1.45 (22-01-2023)
 - Updated to support World of Warcraft v10.0.5+ and v3.4.1+.
 - The "Textures" option for map tile exporting is now enabled by default.
 - Improved load times when previewing large WMO models.
@@ -123,13 +201,13 @@
 - Fixed issue that prevented map tile exporting when "Enable Shared Children" is disabled.
 - Fixed an issue where strings from decrypted DB2 data could be corrupt.
 
-0.1.44 (24-10-2022)
+## 0.1.44 (24-10-2022)
 - Added preview and export support for new texture references used in some Dragonflight WMOs.
 - Added expansion icon for Dragonflight.
 - Added Classic Era (1.14) to product list.
 - Fixed an issue where DB2s could not be exported as raw client files.
 
-0.1.43 (29-05-2022)
+## 0.1.43 (29-05-2022)
 - Added ability to click + drag when selecting map tiles, making large selections much quicker.
 - Added a "Copy to Clipboard" button for the model-viewer, allowing the 3D preview to be directly copied to the clipboard without needing to export, complete with transparency.
 - Added a "Copy to Clipboard" button to the texture tab, allowing the currently active  texture to be copied clipboard without needing to export, complete with transparency.
@@ -164,16 +242,16 @@
 - Renamed the 'wow_classic_beta' branch to 'Beta: World of Warcraft Classic' with the tag 'Classic Beta'.
 - Renamed the 'wow_classic_ptr' branch to 'PTR: World of Warcraft Classic' with the tag 'Classic PTR'.
 
-0.1.42 (12-03-2022)
+## 0.1.42 (12-03-2022)
 - wow.export now has a new website located at https://www.kruithne.net/wow.export/
 - By default, listfiles will now be downloaded from https://www.kruithne.net/wow.export/data/listfile/master
 - By default, TACT encryption keys will now be downloaded from https://www.kruithne.net/wow.export/data/tact/wow
 - Files do not exist in the loaded game installation will no longer appear in file lists.
 
-0.1.41 (16-01-2022)
+## 0.1.41 (16-01-2022)
 - Added `ambientColor` field to WMO groups in JSON metadata (MDAL).
 
-0.1.40 (20-10-2021)
+## 0.1.40 (20-10-2021)
 - Added vertex colour data to ADT export meta JSON.
 - Added texture height scale/offset to alpha map meta exports.
 - Fixed missing fileDataID column in CSV placement file for ADT exports.
@@ -181,18 +259,18 @@
 - Fixed issue that prevented M2 .skel files from exporting in raw exports.
 - Fixed issue that caused navigation issues from the Blender add-on screen.
 
-0.1.39 (14-09-2021)
+## 0.1.39 (14-09-2021)
 - Added option to export M2 bone data into a relative *_bones.json file.
 - Added an `exportID` property to `EXPORT_` and `HOOK_EXPORT_COMPLETE` RCP messages.
 - M2 models exported with a skin will now be named uniquely based on the selected skin.
 - Fixed issue with texture ribbon being overwritten by M2 textures when viewing a WMO.
 
-0.1.38 (13-09-2021)
+## 0.1.38 (13-09-2021)
 - Implemented remote control protocol for advanced users.
 - Regular expression matching is now case-insensitive.
 - Fixed issue that prevented certain models from rendering while the texture ribbon is active.
 
-0.1.37 (01-09-2021)
+## 0.1.37 (01-09-2021)
 - Added texture ribbon to the 3D model viewer, allowing inspection of used textures.
 - Added ability to copy item names/IDs to the clipboard from the item browser.
 - Added ability to view items on Wowhead (external) from the item browser.
@@ -203,7 +281,7 @@
 - Removed buttons to toggle sidebar visibility; sidebar is now always visible.
 - Changed Discord links in the footer/crash screen to point to new support location.
 
-0.1.36 (31-08-2021)
+## 0.1.36 (31-08-2021)
 - Added `colors` property to M2 metadata containing color/alpha timelines for models.
 - Added `textureWeights` property to M2 metadata containing global texture transparency timelines for models.
 - Added `transparencyLookup` property to M2 metadata for texture unit mapping to transparency entries.
@@ -215,7 +293,7 @@
 - Added option to export all associated raw `.anim` files with M2 models.
 - Added option to export liquid (water, lava, etc) data for ADT tiles.
 
-0.1.35 (30-08-2021)
+## 0.1.35 (30-08-2021)
 - Fixed issue that caused invalid OBJ files to be produced for M2 collision geometry.
 - Added `skin.subMeshes.enabled` property to M2 metadata, indicating which sub-meshes were exported.
 - Added `groups.enabled` property to WMO metadata, indicating which WMO groups were exported.
@@ -228,21 +306,21 @@
 - Unknown sound files are now listed with the `.unk_sound` extension rather than `.ogg`.
 - Unknown sound files are now automatically type-detected on export and given the correct extension.
 
-0.1.34 (24-08-2021)
+## 0.1.34 (24-08-2021)
 - Added height textures to ADT alpha map exports, mapped in the metadata layer entries.
 - Added effectID (GroundEffectTexture#ID) property to ADT alpha map layer metadata.
 - Added advanced foliage meta data exporting (disabled by default).
 
-0.1.33 (13-08-2021)
+## 0.1.33 (13-08-2021)
 - Added support for unknown sound files, now listed as "unknown_xxx.ogg".
 - Fixed issue that prevented unknown model/textures from appearing in the listfiles.
 
-0.1.32 (28-06-2021)
+## 0.1.32 (28-06-2021)
 - Added export/import support for additional UV layers in WMO objects.
 - Added export support for additional vertex colour layers in WMO objects.
 - Added BLP texture exports for raw WMO files.
 
-0.1.31 (04-06-2021)
+## 0.1.31 (04-06-2021)
 - Updated Blender add-on to support Blender version 2.93.
 - Improved group names in WMO meta data exporting.
 - Added option for POSIX-style path formatting in exported files.
@@ -251,7 +329,7 @@
 - Added export support for secondary/tertiary textures on WMO models.
 - Fixed issue that prevented certain map tiles from preview/exporting.
 
-0.1.30 (01-05-2021)
+## 0.1.30 (01-05-2021)
 - Added 'Export Textures' option to sidebar to allow models to be exported without textures.
 - Added fileDataID, fileName and internalName fields to exported M2 meta data.
 - Added option to export raw WMO group files (when exporting raw WMO models).
@@ -271,7 +349,7 @@
 - Fixed issue that caused invalid collision OBJ files to be exported.
 - Fixed issue that caused WMO doodad sets to be incorrectly exported.
 
-0.1.29 (29-03-2021)
+## 0.1.29 (29-03-2021)
 - Added new 'Items' tab, allowing model/texture look-up of specific game items.
 - Added ability to select multiple files for import with the Blender add-on.
 - Added ability to toggle individual colour channels in the texture browser.
@@ -286,14 +364,14 @@
 - Fixed issue that caused skins to disappear when switching between item models.
 - The 'successfully exported' toast will now remain visible until dismissed.
 
-0.1.28 (12-03-2021)
+## 0.1.28 (12-03-2021)
 - Added skin selection/export support for creatures/items.
 - Added double-sided rendering to M2/WMO 3D previews.
 - Added option to display/search file data IDs in listfiles.
 - Improved skin naming to fit on screen.
 - Improved default selected geosets for models.
 
-0.1.27 (27-02-2021)
+## 0.1.27 (27-02-2021)
 - Added option to export UV2 data for M2 models as non-standard OBJ property (disabled by default).
 - Added texture information (name, dimensions, encoding) to the texture preview window.
 - Added option to export meta data for BLP files (disabled by default).
@@ -308,17 +386,17 @@
 - Fixed issue that could cause alpha channel to be linked incorrectly in imported material shaders.
 - Fixed issue that preventing pasting into a listfile search under some circumstances.
 
-0.1.26 (09-02-2021)
+## 0.1.26 (09-02-2021)
 - Added a 'Paste Selection' feature for selecting from clipboard input.
 - Added a selection counter underneath listfiles.
 - Fixed an issue with broken selection information appearing under the skin menu.
 
-0.1.25 (27-01-2021)
+## 0.1.25 (27-01-2021)
 - Added legacy fallback support for MDX/MDL files in old WMOs.
 - Added a file count indicator under listfiles.
 - Fix an issue with spaces being included in MTL material names.
 
-0.1.24 (17-12-2020)
+## 0.1.24 (17-12-2020)
 - Fixed missing escape slashes in regex guide tooltip.
 - Fixed an issue that prevented exporting Classic WMOs with missing materials.
 - Added a 3D grid to the model viewer (can be toggled on the sidebar).
@@ -326,20 +404,20 @@
 - Added the 'Split Alpha Maps option to settings.
 - Removed the 'Map Texture Split Threshold' option from settings.
 
-0.1.23 (28-11-2020)
+## 0.1.23 (28-11-2020)
 - Added a warning to the configuration screen for export directories that contain spaces.
 - Added indicator for when regular expression searching is enabled with quick-guide tooltip.
 
-0.1.22 (26-11-2020)
+## 0.1.22 (26-11-2020)
 - Fixed issue that prevented raw M2/skin exports.
 - Fixed an issue with local user-defined listfiles not working without a wildcard.
 - Fixed an issue that prevented exporting of cinematics that are locally corrupted.
 
-0.1.21 (25-11-2020)
+## 0.1.21 (25-11-2020)
 - Added new 'Text' tab which allows preview/exporting of subtitles, Lua, XML, HTML, config and more.
 - Fixed an issue that prevented data tables from parsing on newest WoW builds.
 
-0.1.20 (23-11-2020)
+## 0.1.20 (23-11-2020)
 - Added expansion icons to the map exporter list.
 - Added ability to cancel exports that are in-progress.
 - Added verbose progress information for heavy export tasks (WMOs, ADTs, etc).
@@ -351,53 +429,53 @@
 - Using the automatic Blender add-on installer now targets all installed versions of Blender on your system.
 - Definitions for data tables are now automatically updated (update repository can be configured in settings).
 
-0.1.19 (19-11-2020)
+## 0.1.19 (19-11-2020)
 - Added 'Strip Whitespace From Export Paths' option to settings (enabled by default).
 - Added the FileDataID field to ModelPlacementInformation CSV files.
 
-0.1.18 (10-11-2020)
+## 0.1.18 (10-11-2020)
 - Added 'Texture Alpha' option to model exporter, allowing binary control of texture transparency on models.
 - Added geoset labels for new Shadowlands customization.
 - Fixed issue that prevented wow.export from failing on corrupt game installations.
 
-0.1.17 (25-10-2020)
+## 0.1.17 (25-10-2020)
 - Added ability to export M2 meta data as .json (disabled by default).
 
-0.1.16 (07-09-2020)
+## 0.1.16 (07-09-2020)
 - Fixed issue that prevented wow.export from working when launched from the start menu.
 
-0.1.15 (16-08-2020)
+## 0.1.15 (16-08-2020)
 - Fixed issue that caused wow.export to crash when registering large amounts of encryption keys.
 - Exporting M2 models as RAW will now include related BLP files.
 - Fixed inconsistency with whitespace in exported file paths (it is now always stripped).
 
-0.1.14 (08-08-2020)
+## 0.1.14 (08-08-2020)
 - The map viewer now supports selecting all tiles at once (Control + A).
 - Added 'Include Holes' option, allowing map tiles to be exported without holes.
 
-0.1.13 (30-07-2020)
+## 0.1.13 (30-07-2020)
 - Added information tooltips to export control checkboxes.
 - Added a 'View Log' button to the top-right navigation for quick access of the application log.
 - Fixed issue that prevented mouse wheel navigation on listboxes from being accurate.
 
-0.1.12 (23-07-2020)
+## 0.1.12 (23-07-2020)
 - Fixed issue that prevented Blender add-on from working on non-English Blender clients.
 - Fixed issue that caused exported PNG files to be premultipled (black splotches).
 - Added option to export game objects with map tiles (WIP, slightly broken).
 
-0.1.11 (21-07-2020)
+## 0.1.11 (21-07-2020)
 - Added 'Export .skin files' option for raw M2 exporting.
 - Fixed issue that prevented some Classic WMOs from exporting correctly due to filename whitespace.
 - Exported models now have proper material names instead of fileDataIDs.
 - MTL material names are now prefixed with a non-numeric value for compatibility with Maya.
 
-0.1.10 (19-07-2020)
+## 0.1.10 (19-07-2020)
 - Fixed issue that prevented doodad sets from exporting/previewing under certain circumstances.
 - 3D model panning via W, A, S, D, Q, E keys implemented.
 - Allow users to manually configure the map texture split threshold in configuration.
 - Added 'Use Absolute Model Placement Paths' option.
 
-0.1.9 (13-01-2020)
+## 0.1.9 (13-01-2020)
 - 'Enable Shared Textures' now exports textures to their full path, rather than a unified directory.
 - Added a 'Use Absolute MTL Paths' option in settings for Cinema 4D users.
 - Added a 'Copy File Directories' setting which makes CTRL + C only copy file directories.
@@ -410,7 +488,7 @@
 - Fixed issue with ADTs failing to export due to bad/missing doodads and/or WMOs.
 - The 'Open Export Directory' link after exporting has been replaced with 'View in Explorer' which opens the directory of the last exported item.
 
-0.1.8 (11-01-2020)
+## 0.1.8 (11-01-2020)
 - NPC variant textures can now be selected/exported for creature models.
 - Game clients are now checked for unknown models/textures (listed as 'unknown_xxx').
 - Foliage doodads can now be exported along with map tiles in the map exporter.
@@ -428,7 +506,7 @@
 - Fixed texture files for exported WMOs incorrectly having alpha channels (transparency).
 - Fixed issue that prevented certain models (and thus some map tiles) from exporting.
 
-0.1.7 (04-01-2020)
+## 0.1.7 (04-01-2020)
 - Users will now be prompted when a new version of the Blender add-on is available.
 - Automatic installation of the Blender add-on now supports alpha/beta versions of Blender.
 - Listfile source can now be configured to point to local listfiles.
@@ -437,17 +515,17 @@
 - Fixed holes in exported terrain being slightly offset.
 - Fixed terrain material name conflicts in Blender by using a unique name per tile.
 
-0.1.6 (03-01-2020)
+## 0.1.6 (03-01-2020)
 - Fixed crash when exporting modern ADTs.
 - Fixed incorrect ADT WMO Blender import rotations.
 - Reduce download/update size by compressing loading animation.
 
-0.1.5 (03-01-2020)
+## 0.1.5 (03-01-2020)
 - Fixed incorrect WMO-only Blender import doodad rotations.
 
-0.1.4 (03-01-2020)
+## 0.1.4 (03-01-2020)
 - Fixed issue that prevented encryption keys from properly updating.
 - Fixed issue that caused map exporter to freeze on certain clients.
 
-0.1.3 (02-01-2020)
+## 0.1.3 (02-01-2020)
 - Initial public beta.

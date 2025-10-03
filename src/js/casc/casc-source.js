@@ -81,6 +81,25 @@ class CASC {
 	}
 
 	/**
+	 * Check if a file exists by its fileDataID.
+	 * @param {number} fileDataID 
+	 * @returns {boolean}
+	 */
+	fileExists(fileDataID) {
+		const root = this.rootEntries.get(fileDataID);
+		if (root === undefined)
+			return false;
+
+		for (const [rootTypeIdx] of root.entries()) {
+			const rootType = this.rootTypes[rootTypeIdx];
+			if ((rootType.localeFlags & this.locale) && ((rootType.contentFlags & ContentFlag.LowViolence) === 0))
+				return true;
+		}
+
+		return false;
+	}
+
+	/**
 	 * Obtain a file by it's fileDataID.
 	 * @param {number} fileDataID 
 	 */
@@ -151,14 +170,21 @@ class CASC {
 	}
 
 	/**
+	 * Prepare listfile data before loading.
+	 * Ensures preloading is complete to avoid race conditions.
+	 */
+	async prepareListfile() {
+		await this.progress.step('Preparing listfiles...');
+		await listfile.prepareListfile();
+	}
+
+	/**
 	 * Load the listfile for selected build.
 	 * @param {string} buildKey 
 	 */
 	async loadListfile(buildKey) {
-		await this.progress.step('Loading listfile');
-		const entries = await listfile.loadListfile(buildKey, this.cache, this.rootEntries);
-		if (entries === 0)
-			throw new Error('No listfile entries found');
+		await this.progress.step('Loading listfiles');
+		listfile.applyPreload(this.rootEntries);
 	}
 
 	/**
@@ -186,7 +212,6 @@ class CASC {
 		core.view.listfileVideos = listfile.getFilenamesByExtension('.avi');
 		core.view.listfileText = listfile.getFilenamesByExtension(['.txt', '.lua', '.xml', '.sbt', '.wtf', '.htm', '.toc', '.xsd']);
 		core.view.listfileModels = listfile.getFilenamesByExtension(this.getModelFormats());
-		core.view.listfileDB2s = listfile.getFilenamesByExtension('.db2');
 	}
 
 	/**
@@ -202,41 +227,6 @@ class CASC {
 		core.view.$watch('config.listfileShowFileDataIDs', () => core.events.emit('listfile-needs-updating'), { immediate: true });
 	}
 
-	/**
-	 * Load tables that are required globally.
-	 */
-	async loadTables() {
-		await this.progress.step('Loading model file data');
-		await DBModelFileData.initializeModelFileData();
-
-		await this.progress.step('Loading texture file data');
-		await DBTextureFileData.initializeTextureFileData();
-
-		// Once the above two tables have loaded, ingest fileDataIDs as
-		// unknown entries to the listfile.
-		if (core.view.config.enableUnknownFiles) {
-			this.progress.step('Checking data tables for unknown files');
-			await listfile.loadUnknowns();
-		} else {
-			await this.progress.step();
-		}
-
-		if (core.view.config.enableM2Skins) {
-			await this.progress.step('Loading item displays');
-			await DBItemDisplays.initializeItemDisplays();
-
-			await this.progress.step('Loading creature data');
-			const creatureDisplayInfo = new WDCReader('DBFilesClient/CreatureDisplayInfo.db2');
-			await creatureDisplayInfo.parse();
-
-			const creatureModelData = new WDCReader('DBFilesClient/CreatureModelData.db2');
-			await creatureModelData.parse();
-
-			await DBCreatures.initializeCreatureData(creatureDisplayInfo, creatureModelData);
-		} else {
-			await this.progress.step();
-		}
-	}
 
 	/**
 	 * Initialize external components as part of the CASC load process.

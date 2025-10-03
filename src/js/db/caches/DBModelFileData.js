@@ -14,6 +14,7 @@ const fileDataIDs = new Set();
  * Initialize model file data from ModelFileData.db2
  */
 const initializeModelFileData = async () => {
+	if (modelResIDToFileDataID.size > 0) return;
 	log.write('Loading model mapping...');
 	const modelFileData = new WDCReader('DBFilesClient/ModelFileData.db2');
 	await modelFileData.parse();
