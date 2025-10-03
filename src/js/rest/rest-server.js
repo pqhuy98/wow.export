@@ -17,6 +17,9 @@ const modelsService = require('../ui/tab-models');
 const texturesService = require('../ui/tab-textures');
 const charactersService = require('../ui/headless-character');
 const WDCReader = require('../db/WDCReader');
+const ADTExporter = require('../3D/exporters/ADTExporter');
+const ExportHelper = require('../casc/export-helper');
+const { buildADTExportOptions, getTileBounds, collectGameObjects } = require('../3D/utils/map-export-utils');
 
 class RestServer {
 	constructor() {
@@ -74,6 +77,8 @@ class RestServer {
 				return this.exportTextures(body, res);
 			case '/rest/exportCharacter':
 				return this.exportCharacter(body, res);
+			case '/rest/exportADT':
+				return this.exportADT(body, res);
 			default:
 				return this.sendJSON(res, 404, { id: 'ERR_NOT_FOUND' });
 		}
@@ -262,6 +267,8 @@ class RestServer {
 		core.view.showLoadScreen();
 		try {
 			await casc.load(body.buildIndex);
+			// New build loaded; clear cached WDT data to avoid stale cache across builds
+			try { ADTExporter.clearCache(); } catch (_) {}
 			core.view.setScreen('tab-models');
 			core.view.casc = casc;
 			this._pendingCASC = null;
@@ -417,6 +424,123 @@ class RestServer {
 		} catch (e) {
 			const status = 500;
 			const obj = { id: 'ERR_INTERNAL', message: e.message };
+			this._setCachedResponse(cacheKey, status, obj);
+			return this.sendJSON(res, status, obj);
+		}
+	}
+
+	async exportADT(body, res) {
+		const casc = core.view.casc;
+		const buildKey = casc?.getBuildKey ? casc.getBuildKey() : (casc?.buildKey || casc?.build || '');
+		const cacheKey = this._makeCacheKey('/rest/exportADT|' + String(buildKey), body);
+		const cached = this._getCachedResponse(cacheKey);
+		if (cached) return this.sendJSON(res, cached.status, cached.obj);
+		if (!casc) {
+			const status = 409; const obj = { id: 'ERR_NO_CASC' };
+			this._setCachedResponse(cacheKey, status, obj);
+			return this.sendJSON(res, status, obj);
+		}
+
+		// Validate required parameters
+		const mapID = body?.mapID;
+		const mapDir = body?.mapDir;
+		const tileX = body?.tileX;
+		const tileY = body?.tileY;
+
+		if (typeof mapID !== 'number' || typeof mapDir !== 'string' || typeof tileX !== 'number' || typeof tileY !== 'number') {
+			const status = 400;
+			const obj = {
+				id: 'ERR_INVALID_PARAMETERS',
+				required: {
+					mapID: 'number',
+					mapDir: 'string',
+					tileX: 'number (0-63)',
+					tileY: 'number (0-63)',
+					quality: 'number (optional, -1=alpha, 0=no tex, 1-512=minimap, 513+=baked, default 4096)',
+					exportRaw: 'boolean (optional, default false)',
+					includeM2: 'boolean (optional, default true)',
+					includeWMO: 'boolean (optional, default true)',
+					includeWMOSets: 'boolean (optional, default true)',
+					includeGameObjects: 'boolean (optional, default false)',
+					includeLiquid: 'boolean (optional, default true)',
+					includeFoliage: 'boolean (optional, default true)',
+					includeHoles: 'boolean (optional, default true)',
+					splitAlphaMaps: 'boolean (optional, default false)',
+					splitLargeTerrainBakes: 'boolean (optional, default false)',
+					gameObjects: 'array (optional, additional game objects to export)'
+				}
+			};
+			this._setCachedResponse(cacheKey, status, obj);
+			return this.sendJSON(res, status, obj);
+		}
+
+		if (tileX < 0 || tileX > 63 || tileY < 0 || tileY > 63) {
+			const status = 400;
+			const obj = { id: 'ERR_INVALID_TILE_COORDS', message: 'Tile coordinates must be 0-63' };
+			this._setCachedResponse(cacheKey, status, obj);
+			return this.sendJSON(res, status, obj);
+		}
+
+		const exportID = this.nextExportID();
+		const tileIndex = tileY * 64 + tileX;
+
+		// Build request-specific options without mutating global config
+		const requestOptions = buildADTExportOptions(core.view.config, {
+			mapsExportRaw: body.exportRaw,
+			mapsIncludeM2: body.includeM2,
+			mapsIncludeWMO: body.includeWMO,
+			mapsIncludeWMOSets: body.includeWMOSets,
+			mapsIncludeGameObjects: body.includeGameObjects,
+			mapsIncludeLiquid: body.includeLiquid,
+			mapsIncludeFoliage: body.includeFoliage,
+			mapsIncludeHoles: body.includeHoles,
+			splitAlphaMaps: body.splitAlphaMaps,
+			splitLargeTerrainBakes: body.splitLargeTerrainBakes
+		});
+
+		try {
+
+			const quality = body.quality !== undefined ? Number(body.quality) : 4096;
+			const exportDir = path.join(core.view.config.exportDirectory, 'adt', mapDir);
+			await fs.promises.mkdir(exportDir, { recursive: true });
+
+			const exporter = new ADTExporter(mapID, mapDir, tileIndex);
+			const helper = new ExportHelper(1);
+
+			// Optional game objects set
+			let gameObjects = body.gameObjects ? new Set(body.gameObjects) : undefined;
+			if (!gameObjects && requestOptions.mapsIncludeGameObjects === true) {
+				const { startX, startY, endX, endY } = getTileBounds(tileX, tileY);
+				gameObjects = await collectGameObjects(mapID, obj => {
+					const [posX, posY] = obj.Pos;
+					return posX > startX && posX < endX && posY > startY && posY < endY;
+				});
+			}
+
+			const result = await exporter.export(exportDir, quality, gameObjects, helper, requestOptions);
+
+			// Keep WDT cache across REST exports for perf; only clear on build change above
+
+			const status = 200;
+			const obj = {
+				id: 'EXPORT_RESULT',
+				type: 'ADT',
+				exportID,
+				mapID,
+				mapDir,
+				tileX,
+				tileY,
+				tileIndex,
+				exportPath: exportDir,
+				exportType: result.type,
+				mainFile: result.path ? path.relative(core.view.config.exportDirectory, result.path) : null
+			};
+			this._setCachedResponse(cacheKey, status, obj);
+			return this.sendJSON(res, status, obj);
+		} catch (e) {
+			log.write('ADT export error: %s', e.message);
+			const status = 500;
+			const obj = { id: 'ERR_INTERNAL', message: e.message, stack: e.stack };
 			this._setCachedResponse(cacheKey, status, obj);
 			return this.sendJSON(res, status, obj);
 		}

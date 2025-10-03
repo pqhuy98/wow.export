@@ -16,6 +16,7 @@ const WDTLoader = require('../3D/loaders/WDTLoader');
 const ADTExporter = require('../3D/exporters/ADTExporter');
 const ExportHelper = require('../casc/export-helper');
 const WMOExporter = require('../3D/exporters/WMOExporter');
+const { buildADTExportOptions, getTileBounds, collectGameObjects } = require('../3D/utils/map-export-utils');
 
 let selectedMapID;
 let selectedMapDir;
@@ -123,52 +124,7 @@ const loadMapTile = async (x, y, size) => {
 	}
 };
 
-/**
- * Collect game objects from GameObjects.db2 for export.
- * @param {number} mapID
- * @param {function} filter
- */
-const collectGameObjects = async (mapID, filter) => {
-	// Load GameObjects.db2/GameObjectDisplayInfo.db2 on-demand.
-	if (gameObjectsDB2 === null) {
-		const objTable = new WDCReader('DBFilesClient/GameObjects.db2');
-		await objTable.parse();
-
-		const idTable = new WDCReader('DBFilesClient/GameObjectDisplayInfo.db2');
-		await idTable.parse();
-
-		// Index all of the rows by the map ID.
-		gameObjectsDB2 = new Map();
-		for (const row of objTable.getAllRows().values()) {
-			// Look-up the fileDataID ahead of time.
-			const fidRow = idTable.getRow(row.DisplayID);
-			if (fidRow !== null) {
-				row.FileDataID = fidRow.FileDataID;
-
-				let map = gameObjectsDB2.get(row.OwnerID);
-				if (map === undefined) {
-					map = new Set();
-					map.add(row);
-					gameObjectsDB2.set(row.OwnerID, map);
-				} else {
-					map.add(row);
-				}
-			}
-		}
-	}
-
-	const result = new Set();
-	const mapObjects = gameObjectsDB2.get(mapID);
-
-	if (mapObjects !== undefined) {
-		for (const obj of mapObjects) {
-			if (filter !== undefined && filter(obj))
-				result.add(obj);
-		}
-	}
-
-	return result;
-};
+// collectGameObjects is now provided by ../3D/utils/map-export-utils
 
 const exportSelectedMapWMO = async () => {
 	const helper = new ExportHelper(1, 'WMO');
@@ -238,6 +194,9 @@ const exportSelectedMap = async () => {
 	// when the path is trimmed, users end up in the right place. Bit hack-y, but quicker.
 	const markPath = path.join('maps', selectedMapDir, selectedMapDir);
 
+	// Build stable options once per export run from the current config
+	const exportOptions = buildADTExportOptions(core.view.config, {});
+
 	for (const index of exportTiles) {
 		// Abort if the export has been cancelled.
 		if (helper.isCancelled())
@@ -247,12 +206,8 @@ const exportSelectedMap = async () => {
 
 		// Locate game objects within the tile for exporting.
 		let gameObjects = undefined;
-		if (core.view.config.mapsIncludeGameObjects === true) {
-			const startX = MAP_OFFSET - (adt.tileX * TILE_SIZE) - TILE_SIZE;
-			const startY = MAP_OFFSET - (adt.tileY * TILE_SIZE) - TILE_SIZE;
-			const endX = startX + TILE_SIZE;
-			const endY = startY + TILE_SIZE;
-
+		if (exportOptions.mapsIncludeGameObjects === true) {
+			const { startX, startY, endX, endY } = getTileBounds(adt.tileX, adt.tileY);
 			gameObjects = await collectGameObjects(selectedMapID, obj => {
 				const [posX, posY] = obj.Pos;
 				return posX > startX && posX < endX && posY > startY && posY < endY;
@@ -260,7 +215,7 @@ const exportSelectedMap = async () => {
 		}
 
 		try {
-			const out = await adt.export(dir, exportQuality, gameObjects, helper);
+			const out = await adt.export(dir, exportQuality, gameObjects, helper, exportOptions);
 			await exportPaths?.writeLine(out.type + ':' + out.path);
 			helper.mark(markPath, true);
 		} catch (e) {

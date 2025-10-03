@@ -207,11 +207,13 @@ class ADTExporter {
 	 * @param {number} textureRes
 	 * @param {Set|undefined} gameObjects Additional game objects to export.
 	 * @param {ExportHelper} helper
+	 * @param {object} [options] Optional export options to avoid using global view.config
 	 * @returns {string}
 	 */
-	async export(dir, quality, gameObjects, helper) {
+	async export(dir, quality, gameObjects, helper, options) {
 		const casc = core.view.casc;
-		const config = core.view.config;
+		// Prefer caller-provided options; fall back to global config for backward compatibility
+		const config = options || core.view.config;
 
 		const out = { type: config.mapsExportRaw ? 'ADT_RAW' : 'ADT_OBJ', path: '' };
 
@@ -268,7 +270,6 @@ class ADTExporter {
 			}
 		}
 
-		console.log(wdt);
 		const tilePrefix = prefix + '_' + this.tileID;
 
 		const maid = wdt.entries[this.tileIndex];
