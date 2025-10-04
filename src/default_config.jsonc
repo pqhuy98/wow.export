@@ -36,6 +36,7 @@
 	"removePathSpaces": true,
 	"removePathSpacesCopy": true,
 	"exportTextureFormat": "PNG",
+	"exportWebPQuality": 90,
 	"exportChannelMask": 15,
 	"showTextureInfo": true,
 	"showTextureAtlas": false,
@@ -94,8 +95,6 @@
 	"chrShowTextureOverlay": false,
 	"itemViewerShowAll": false,
 	"pathFormat": "win32",
-	"rcpEnabled": true,
-	"rcpPort": 17751,
 	"lastExportFile": "",
 	"showZoneOverlays": true
 }

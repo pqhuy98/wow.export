@@ -9,12 +9,36 @@ const WDCReader = require('../db/WDCReader');
 const listfile = require('../casc/listfile');
 const BoneMapper = require('../3D/BoneMapper');
 const DBCreatures = require('../db/caches/DBCreatures');
-const { initCaches } = require('../db/caches/init-cache');
+const { doOnce } = require('../generics');
 
 let lookupsCache = null;
-async function getLookups() {
+const initializeCharacterCaches = doOnce('initializeCharacterCaches', async () => {
 	if (lookupsCache) return lookupsCache;
 	console.log('[headless] Loading DB2s and building lookup maps...');
+
+	// TextureFileData.db2
+	const tfdDB = new WDCReader('DBFilesClient/TextureFileData.db2');
+	const chrModelDB = new WDCReader('DBFilesClient/ChrModel.db2');
+	const chrCustElementDB = new WDCReader('DBFilesClient/ChrCustomizationElement.db2');
+	const chrCustMatDB = new WDCReader('DBFilesClient/ChrCustomizationMaterial.db2');
+	const chrCustChoiceDB = new WDCReader('DBFilesClient/ChrCustomizationChoice.db2');
+	const chrCustGeosetDB = new WDCReader('DBFilesClient/ChrCustomizationGeoset.db2');
+	const chrModelTextureLayerDB = new WDCReader('DBFilesClient/ChrModelTextureLayer.db2');
+	const charComponentTextureSectionDB = new WDCReader('DBFilesClient/CharComponentTextureSections.db2');
+	const chrModelMaterialDB = new WDCReader('DBFilesClient/ChrModelMaterial.db2');
+	const chrRaceXChrModelDB = new WDCReader('DBFilesClient/ChrRaceXChrModel.db2');
+	await Promise.all([
+		DBCreatures.initializeCreatureData(),
+		tfdDB.parse(),
+		chrModelDB.parse(),
+		chrCustElementDB.parse(),
+		chrCustGeosetDB.parse(),
+		chrCustMatDB.parse(),
+		chrModelTextureLayerDB.parse(),
+		chrModelMaterialDB.parse(),
+		chrRaceXChrModelDB.parse(),
+		chrCustChoiceDB.parse()
+	]);
 
 	// Lookup maps
 	const chrRaceXChrModelMap = new Map();
@@ -30,30 +54,6 @@ async function getLookups() {
 	const charComponentTextureSectionMap = new Map();
 	const chrModelMaterialMap = new Map();
 	const chrCustSkinnedModelMap = new Map();
-
-	// TextureFileData.db2
-	const tfdDB = new WDCReader('DBFilesClient/TextureFileData.db2');
-	const chrModelDB = new WDCReader('DBFilesClient/ChrModel.db2');
-	const chrCustElementDB = new WDCReader('DBFilesClient/ChrCustomizationElement.db2');
-	const chrCustMatDB = new WDCReader('DBFilesClient/ChrCustomizationMaterial.db2');
-	const chrCustChoiceDB = new WDCReader('DBFilesClient/ChrCustomizationChoice.db2');
-	const chrCustGeosetDB = new WDCReader('DBFilesClient/ChrCustomizationGeoset.db2');
-	const chrModelTextureLayerDB = new WDCReader('DBFilesClient/ChrModelTextureLayer.db2');
-	const charComponentTextureSectionDB = new WDCReader('DBFilesClient/CharComponentTextureSections.db2');
-	const chrModelMaterialDB = new WDCReader('DBFilesClient/ChrModelMaterial.db2');
-	const chrRaceXChrModelDB = new WDCReader('DBFilesClient/ChrRaceXChrModel.db2');
-	await Promise.all([
-		...initCaches(),
-		tfdDB.parse(),
-		chrModelDB.parse(),
-		chrCustElementDB.parse(),
-		chrCustGeosetDB.parse(),
-		chrCustMatDB.parse(),
-		chrModelTextureLayerDB.parse(),
-		chrModelMaterialDB.parse(),
-		chrRaceXChrModelDB.parse(),
-		chrCustChoiceDB.parse()
-	]);
 
 	const tfdMap = new Map();
 	for (const tfdRow of tfdDB.getAllRows().values()) {
@@ -154,7 +154,7 @@ async function getLookups() {
 	};
 	console.log('[headless] DB2s loaded and lookups built.');
 	return lookupsCache;
-}
+});
 
 // Exporter pool keyed by fileDataID for concurrency-safe reuse.
 const MAX_POOL_PER_KEY = 2;
@@ -198,7 +198,7 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 	try {
 		await CharMaterialRenderer.init(); // Ensure shaders are loaded and compiled
 		console.log('[headless] Starting export for', { race, gender, customizations, geosetIds, hideGeosetIds });
-		const lookups = await getLookups();
+		const lookups = await initializeCharacterCaches();
 		// 1. Find model for race/gender
 		const modelMap = lookups.chrRaceXChrModelMap.get(race);
 		console.log('[headless] Model map for race', race, ':', modelMap);
@@ -368,4 +368,5 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 
 module.exports = {
 	exportCharacterModelHeadless,
+	initializeCharacterCaches,
 };

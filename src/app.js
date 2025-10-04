@@ -138,7 +138,6 @@ require('./js/ui/tab-raw');
 require('./js/ui/tab-install');
 require('./js/ui/tab-characters');
 
-const RCPServer = require('./js/rcp/rcp-server');
 const RestServer = require('./js/rest/rest-server');
 
 win.setProgressBar(-1); // Reset taskbar progress in-case it's stuck.
@@ -781,10 +780,6 @@ document.addEventListener('click', function(e) {
 
 	// Set source select as the currently active interface screen.
 	core.view.setScreen('source-select');
-
-	// Initiate RCP.
-	core.rcp = new RCPServer();
-	core.rcp.load();
 
 	// Initiate REST (request/reply wrapper around core state)
 	core.rest = new RestServer();

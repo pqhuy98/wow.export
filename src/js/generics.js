@@ -425,7 +425,24 @@ const formatPlaybackSeconds = (seconds) => {
 	return Math.floor(seconds / 60).toString().padStart(2, 0) + ':' + Math.round(seconds % 60).toString().padStart(2, 0);
 };
 
-module.exports = { 
+const doOnceCache = new Map();
+function doOnce(key, func) {
+	return async () => {
+		if (!doOnceCache.has(key)) {
+			doOnceCache.set(key, {status: "pending"});
+			const result = await func();
+			doOnceCache.set(key, {result, status: "complete"});
+			return result;
+		}
+		while (doOnceCache.get(key).status !== "complete") {
+			await new Promise(resolve => setTimeout(resolve, 100));
+		}
+		return doOnceCache.get(key).result;
+	};
+}
+
+module.exports = {
+	doOnce,
 	getJSON,
 	readJSON,
 	parseJSON,

@@ -18,6 +18,7 @@ const listfile = require('./listfile');
 const core = require('../core');
 const generics = require('../generics');
 const CASCRemote = require('./casc-source-remote');
+const cdnResolver = require('./cdn-resolver');
 
 class CASCLocal extends CASC {
 	/**
@@ -135,8 +136,8 @@ class CASCLocal extends CASC {
 		// log.write('CDNConfig: %o', this.cdnConfig);
 	}
 
-	/** 
-	 * Get config from disk with CDN fallback 
+	/**
+	 * Get config from disk with CDN fallback
 	 */
 	async getConfigFileWithRemoteFallback(key) {
 		const configPath = this.formatConfigPath(key);
@@ -145,7 +146,8 @@ class CASCLocal extends CASC {
 			if (!this.remote)
 				await this.initializeRemoteCASC();
 
-			return this.remote.getCDNConfig(key);
+			const cdnHosts = await cdnResolver.getRankedHosts(core.view.selectedCDNRegion.tag, this.remote.serverConfig);
+			return this.remote.getCDNConfig(key, cdnHosts);
 		} else {
 			return CDNConfig(await fsp.readFile(configPath, 'utf8'));
 		}

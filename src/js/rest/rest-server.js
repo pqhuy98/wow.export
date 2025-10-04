@@ -268,7 +268,8 @@ class RestServer {
 		try {
 			await casc.load(body.buildIndex);
 			// New build loaded; clear cached WDT data to avoid stale cache across builds
-			try { ADTExporter.clearCache(); } catch (_) {}
+			await charactersService.initializeCharacterCaches();
+			ADTExporter.clearCache();
 			core.view.setScreen('tab-models');
 			core.view.casc = casc;
 			this._pendingCASC = null;
@@ -306,7 +307,6 @@ class RestServer {
 		const exportID = this.nextExportID();
 		try {
 			const result = await modelsService.exportFilesWithSkins(models, false, exportID, {
-				suppressRcpHook: true,
 				useExportPathsStream: false,
 				skipGlobalCacheInvalidation: true
 			});
@@ -349,7 +349,6 @@ class RestServer {
 		const exportID = this.nextExportID();
 		try {
 			const result = await textureExporter.exportFiles(files, false, exportID, {
-				suppressRcpHook: true,
 				useExportPathsStream: false
 			});
 			const succeeded = Array.isArray(result?.succeeded) ? result.succeeded.length : 0;

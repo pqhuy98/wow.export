@@ -200,6 +200,11 @@
 						<menu-button class="spaced" :dropdown="true" :options="availableLocaleKeys" :default="selectedLocaleKey" @change="configEdit.cascLocale = availableLocale.flags[$event]"></menu-button>
 					</div>
 					<div>
+						<h1>WebP Quality</h1>
+						<p>Quality setting for WebP exports. Range is 1-100 (100 is lossless)</p>
+						<input type="number" min="1" max="100" v-model.number="configEdit.exportWebPQuality"/>
+					</div>
+					<div>
 						<h1>Export Model Collision</h1>
 						<p>If enabled, M2 models exported as OBJ will also have their collision exported into a .phys.obj file.</p>
 						<label class="ui-checkbox">
@@ -366,19 +371,6 @@
 						<p>Remote URL used to obtain DBD manifest information. (Must use same format)</p>
 						<p>Primary <input type="text" class="long" v-model.trim="configEdit.dbdFilenameURL"/></p>
 						<p>Fallback <input type="text" class="long" v-model.trim="configEdit.dbdFilenameFallbackURL" /></p>
-					</div>
-					<div>
-						<h1>Enable Remote Control Protocol (Advanced)</h1>
-						<p>When enabled, wow.export will listen for remote commands on a specified port.</p>
-						<label class="ui-checkbox">
-							<input type="checkbox" v-model="configEdit.rcpEnabled"/>
-							<span>Enable</span>
-						</label>
-					</div>
-					<div>
-						<h1>RCP Port</h1>
-						<p>Specifies the port in which wow.export will listen for RCP connections on.</p>
-						<input type="number" v-model.number="configEdit.rcpPort"/>
 					</div>
 					<div>
 						<h1>Last Export File Location</h1>
@@ -715,7 +707,7 @@
 						<div class="preview-background" id="model-preview">
 							<input v-if="config.modelViewerShowBackground" type="color" id="background-color-input" v-model="config.modelViewerBackgroundColor" title="Click to change background color"/>
 							<model-viewer :context="modelViewerContext"></model-viewer>
-							<div v-if="modelViewerAnims && modelViewerAnims.length > 0" class="animation-dropdown-overlay">
+							<div v-if="modelViewerAnims && modelViewerAnims.length > 0 && !modelTexturePreviewURL" class="animation-dropdown-overlay">
 								<select class="animation-dropdown" v-model="modelViewerAnimSelection">
 									<option v-for="animation in modelViewerAnims" :key="animation.id" :value="animation.id">
 										{{ animation.label }}

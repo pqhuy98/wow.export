@@ -7,8 +7,8 @@ const fs = require('fs');
 const util = require('util');
 const constants = require('./constants');
 
-const MAX_LOG_POOL = 1000;
-const MAX_DRAIN_PER_TICK = 10;
+const MAX_LOG_POOL = 10000; // 1-2MB~
+const MAX_DRAIN_PER_TICK = 50;
 
 let markTimer = 0;
 let isClogged = false;
@@ -82,11 +82,11 @@ const write = (...parameters) => {
 		isClogged = !stream.write(line);
 	} else {
 		// Stream is blocked, pool instead.
-		// If pool exceeds MAX_LOG_POOL, explode.
-		if (pool.length < MAX_LOG_POOL)
+		if (pool.length < MAX_LOG_POOL) {
 			pool.push(line);
-		else
-			throw new Error('ERR_LOG_OVERFLOW: The log pool has overflowed.');
+		} else if (pool.length === MAX_LOG_POOL) {
+			pool.push('[' + getTimestamp() + '] WARNING: Log pool overflow - some log entries have been truncated.\n');
+		}
 	}
 
 	// Mirror output to debugger without recursion (app.js stores original at console.__originalLog)

@@ -3,6 +3,7 @@
 	Authors: Kruithne <kruithne@gmail.com>, Marlamin <marlamin@marlamin.com>
 	License: MIT
  */
+const { doOnce } = require('../../generics');
 const log = require('../../log');
 const WDCReader = require('../WDCReader');
 
@@ -13,7 +14,7 @@ let isInitialized = false;
 /**
  * Initialize creature data.
  */
-const initializeCreatureData = async () => {
+const initializeCreatureData = doOnce('initializeCreatureData', async () => {
 	if (isInitialized)
 		return;
 
@@ -78,7 +79,7 @@ const initializeCreatureData = async () => {
 
 	log.write('Loaded textures for %d creatures', creatureDisplays.size);
 	isInitialized = true;
-};
+});
 
 /**
  * Gets creature skins from a given file data ID.

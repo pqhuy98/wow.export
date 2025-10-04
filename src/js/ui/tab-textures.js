@@ -24,6 +24,7 @@ let hasLoadedAtlasTable = false;
 let hasLoadedUnknownTextures = false;
 
 let selectedFileDataID = 0;
+let resizeObserver = null;
 
 /**
  * Preview a texture by the given fileDataID.
@@ -161,25 +162,68 @@ const reloadTextureAtlasData = async () => {
 
 const updateTextureAtlasOverlayScaling = () => {
 	const overlay = document.getElementById('atlas-overlay');
-	if (!overlay) return;
+	if (!overlay)
+		return;
 
 	const container = overlay.parentElement;
 
-	const texture_width = core.view.textureAtlasOverlayWidth;
-	const texture_height = core.view.textureAtlasOverlayHeight;
+	const texture_width = core.view.texturePreviewWidth;
+	const texture_height = core.view.texturePreviewHeight;
+
+	if (!texture_width || !texture_height)
+		return;
 
 	const container_width = container.clientWidth;
-	const render_width = Math.min(texture_width, container_width);
+	const container_height = container.clientHeight;
 
-	const final_height = texture_height * (render_width / texture_width);
-	
+	const width_ratio = container_width / texture_width;
+	const height_ratio = container_height / texture_height;
+	const scale = Math.min(width_ratio, height_ratio);
+
+	const render_width = texture_width * scale;
+	const render_height = texture_height * scale;
+
 	overlay.style.width = render_width + 'px';
-	overlay.style.height = final_height + 'px';
+	overlay.style.height = render_height + 'px';
+
+	overlay.style.left = ((container_width - render_width) / 2) + 'px';
+	overlay.style.top = ((container_height - render_height) / 2) + 'px';
 }
 
 const attachOverlayListener = () => {
-	const observer = new ResizeObserver(updateTextureAtlasOverlayScaling);
-	observer.observe(document.getElementById('atlas-overlay').parentElement);
+	const atlasOverlay = document.getElementById('atlas-overlay');
+	if (!atlasOverlay || !atlasOverlay.parentElement)
+		return;
+
+	resizeObserver?.disconnect();
+	resizeObserver = new ResizeObserver(updateTextureAtlasOverlayScaling);
+	resizeObserver.observe(atlasOverlay.parentElement);
+
+	const overlay = document.getElementById('atlas-overlay');
+	if (overlay) {
+		overlay.addEventListener('mousemove', (e) => {
+			const region = e.target.closest('.atlas-region');
+			if (region) {
+				const rect = region.getBoundingClientRect();
+				const x = e.clientX - rect.left;
+				const y = e.clientY - rect.top;
+
+				const isBottom = y > (rect.height / 2);
+				const isRight = x > (rect.width / 2);
+
+				region.classList.remove('tooltip-top-left', 'tooltip-top-right', 'tooltip-bottom-left', 'tooltip-bottom-right');
+
+				if (isBottom && isRight)
+					region.classList.add('tooltip-bottom-right');
+				else if (isBottom && !isRight)
+					region.classList.add('tooltip-bottom-left');
+				else if (!isBottom && isRight)
+					region.classList.add('tooltip-top-right');
+				else
+					region.classList.add('tooltip-top-left');
+			}
+		});
+	}
 };
 
 /**
@@ -205,11 +249,15 @@ const updateTextureAtlasOverlay = () => {
 				left: ((region.left / entry.width) * 100) + '%',
 			});
 		}
-
-		updateTextureAtlasOverlayScaling();
 	}
 
 	core.view.textureAtlasOverlayRegions = renderRegions;
+
+	if (entry) {
+		core.view.$nextTick(() => {
+			updateTextureAtlasOverlayScaling();
+		});
+	}
 };
 
 
@@ -222,37 +270,40 @@ const exportTextureAtlasRegions = async (fileDataID) => {
 
 	const helper = new ExportHelper(atlas.regions.length, 'texture');
 	helper.start();
-	
+
 	let exportFileName = fileName;
+	const format = core.view.config.exportTextureFormat;
+	const ext = format === 'WEBP' ? '.webp' : '.png';
+	const mimeType = format === 'WEBP' ? 'image/webp' : 'image/png';
 
 	try {
 		const data = await core.view.casc.getFile(fileDataID);
 		const blp = new BLPFile(data);
-		
+
 		const canvas = blp.toCanvas();
 		const ctx = canvas.getContext('2d');
-		
+
 		for (const regionID of atlas.regions) {
 			if (helper.isCancelled())
 				return;
-			
+
 			const region = textureAtlasRegions.get(regionID);
 
 			exportFileName = path.join(exportDir, region.name);
-			const exportPath = ExportHelper.getExportPath(exportFileName + '.png');
-	
+			const exportPath = ExportHelper.getExportPath(exportFileName + ext);
+
 			const crop = ctx.getImageData(region.left, region.top, region.width, region.height);
-	
+
 			const saveCanvas = document.createElement('canvas');
 			saveCanvas.width = region.width;
 			saveCanvas.height = region.height;
-	
+
 			const saveCtx = saveCanvas.getContext('2d');
 			saveCtx.putImageData(crop, 0, 0);
-	
-			const buf = await BufferWrapper.fromCanvas(saveCanvas, 'image/png');
+
+			const buf = await BufferWrapper.fromCanvas(saveCanvas, mimeType, core.view.config.exportWebPQuality);
 			await buf.writeToFile(exportPath);
-	
+
 			helper.mark(exportFileName, true);
 		}
 	} catch (e) {
@@ -269,11 +320,6 @@ core.registerDropHandler({
 	ext: ['.blp'],
 	prompt: count => util.format('Export %d textures as %s', count, core.view.config.exportTextureFormat),
 	process: files => textureExporter.exportFiles(files, true)
-});
-
-core.events.on('rcp-export-textures', (files, id) => {
-	// RCP should provide an array of fileDataIDs to export.
-	textureExporter.exportFiles(files, false, id);
 });
 
 core.registerLoadFunc(async () => {

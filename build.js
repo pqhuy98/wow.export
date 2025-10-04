@@ -60,6 +60,22 @@ const collectFiles = async (dir, out = []) => {
 	return out;
 };
 
+/**
+ * Apply placeholder replacements to a string value.
+ * e.g: {{year}} -> placeholders.year
+ * @param {string} value
+ * @param {object} placeholders
+ * @returns {string}
+ */
+const applyPlaceholders = (value, placeholders) => {
+	if (typeof value === 'string') {
+		return value.replace(/\{\{(\w+)\}\}/g, (match, placeholder) => {
+			return placeholders[placeholder] ?? match;
+		});
+	}
+	return value;
+};
+
 // Create a promisified version of zlib.deflate.
 const deflateBuffer = util.promisify(zlib.deflate);
 
@@ -228,33 +244,43 @@ const deflateBuffer = util.promisify(zlib.deflate);
 		// Additional source merges: Source is relative to cwd, target relative to build directory.
 		const include = Object.entries(build.include || {});
 		if (include.length > 0) {
-			for (const [source, target] of include)
-				mappings.push({ source: path.resolve(source), target, clone: true });
+			for (const [source, target] of include) {
+				// Check if source ends with /* for recursive directory copy
+				if (source.endsWith('/*')) {
+					const sourceDir = path.resolve(source.slice(0, -2));
+					const targetBase = target.endsWith('/*') ? target.slice(0, -2) : target;
+					mappings.push({ source: sourceDir, target: targetBase, clone: true, recursive: true });
+				} else {
+					mappings.push({ source: path.resolve(source), target, clone: true });
+				}
+			}
 		}
 
 		for (const map of mappings) {
-			const targetPath = path.join(buildDir, map.target);
-			log.info('*%s* -> *%s*', map.source, targetPath);
+			if (map.recursive) {
+				// Recursively copy directory contents
+				const targetPath = path.join(buildDir, map.target);
+				log.info('*%s/* -> *%s/* (recursive)', map.source, targetPath);
 
-			// In the event that we specify a deeper path that does not
-			// exist, make sure we create missing directories first.
-			await fs.mkdir(path.dirname(targetPath), { recursive: true });
-			const func = map.clone ? fs.copyFile : fs.rename;
-			await func(map.source, targetPath);
-		}
+				await fs.mkdir(targetPath, { recursive: true });
+				const files = await collectFiles(map.source);
 
-		// Build included ZIP archives.
-		const includeZip = Object.entries(build.includeZip || {});
-		for (const [source, target] of includeZip) {
-			log.info('Creating archive *%s* -> *%s*', source, target);
-			const zip = new AdmZip();
-			const targetPath = path.join(buildDir, target);
+				for (const file of files) {
+					const relativePath = path.relative(map.source, file);
+					const destPath = path.join(targetPath, relativePath);
+					await fs.mkdir(path.dirname(destPath), { recursive: true });
+					await fs.copyFile(file, destPath);
+				}
+			} else {
+				const targetPath = path.join(buildDir, map.target);
+				log.info('*%s* -> *%s*', map.source, targetPath);
 
-			// Create directory as needed.
-			await fs.mkdir(path.dirname(targetPath), { recursive: true });
-
-			zip.addLocalFolder(path.resolve(source), path.basename(target, '.zip'));
-			zip.writeZip(targetPath);
+				// In the event that we specify a deeper path that does not
+				// exist, make sure we create missing directories first.
+				await fs.mkdir(path.dirname(targetPath), { recursive: true });
+				const func = map.clone ? fs.copyFile : fs.rename;
+				await func(map.source, targetPath);
+			}
 		}
 
 		const osxConfig = build.osxConfig;
@@ -339,6 +365,13 @@ const deflateBuffer = util.promisify(zlib.deflate);
 				'product-version': meta.version
 			}, build.rcedit);
 
+			const placeholders = { year: new Date().getFullYear() };
+
+			if (rcConfig['version-string']) {
+				for (const [key, value] of Object.entries(rcConfig['version-string']))
+					rcConfig['version-string'][key] = applyPlaceholders(value, placeholders);
+			}
+
 			log.info('Writing resource strings on binary...');
 			await rcedit(path.join(buildDir, rcConfig.binary), rcConfig);
 		}
@@ -359,7 +392,33 @@ const deflateBuffer = util.promisify(zlib.deflate);
 				'--outfile',
 				updaterOutput
 			];
-			
+
+			if (build.updater.metadata) {
+				const metadata = build.updater.metadata;
+				const placeholders = { year: new Date().getFullYear() };
+
+				if (build.updater.target.includes('windows')) {
+					if (metadata.title)
+						bunArgs.push('--windows-title=' + applyPlaceholders(metadata.title, placeholders));
+
+					if (metadata.publisher)
+						bunArgs.push('--windows-publisher=' + applyPlaceholders(metadata.publisher, placeholders));
+
+					if (metadata.description)
+						bunArgs.push('--windows-description=' + applyPlaceholders(metadata.description, placeholders));
+
+					if (metadata.copyright)
+						bunArgs.push('--windows-copyright=' + applyPlaceholders(metadata.copyright, placeholders));
+
+					if (metadata.icon)
+						bunArgs.push('--windows-icon=' + path.resolve(metadata.icon));
+
+					bunArgs.push('--windows-version=' + meta.version);
+				}
+
+				log.info('Applied updater metadata: *%s*', metadata.title || 'unknown');
+			}
+
 			const result = Bun.spawnSync({ cmd: ['bun', ...bunArgs], stdio: ['inherit', 'inherit', 'inherit'] });
 			if (result.exitCode !== 0)
 				throw new Error(`Bun build failed with code ${result.exitCode}`);

@@ -6,6 +6,7 @@
 
 const log = require('../../log');
 const WDCReader = require('../WDCReader');
+const { doOnce } = require('../../generics');
 
 const matResIDToFileDataID = new Map();
 const fileDataIDs = new Set();
@@ -13,7 +14,7 @@ const fileDataIDs = new Set();
 /**
  * Initialize texture file data ID from TextureFileData.db2
  */
-const initializeTextureFileData = async () => {
+const initializeTextureFileData = doOnce('initializeTextureFileData', async () => {
 	log.write('Loading texture mapping...');
 	const textureFileData = new WDCReader('DBFilesClient/TextureFileData.db2');
 	await textureFileData.parse();
@@ -33,7 +34,7 @@ const initializeTextureFileData = async () => {
 			matResIDToFileDataID.set(textureFileDataRow.MaterialResourcesID, [textureFileDataID]);
 	}
 	log.write('Loaded texture mapping for %d materials', matResIDToFileDataID.size);
-};
+});
 
 /**
  * Retrieves texture file data IDs by a material resource ID.

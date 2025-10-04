@@ -1,3 +1,23 @@
+## 0.2.2 (03-10-2025)
+- Implemented option to export textures as WebP (textures, atlas and zone maps).
+- Improved CDN fallback support for countries with heavy censorship.
+- Requests to Blizzard CDN servers will now use HTTPS instead of HTTP.
+- Updated decryption logic to support a file format change in Midnight Alpha.
+- Fixed an issue that prevented models with rotation/scale M2Tracks from importing into Blender.
+- Fixed an issue that caused Legion and Battle for Azeroth expansion icons to be swapped.
+- Fixed an issue that caused the notification toasts to appear underneath other UI elements.
+- Fixed an issue preventing "View Recent Changes" from working on non-Windows builds.
+- Fixed an issue that prevented the new Blender add-on from working due to a missing script.
+- Fixed an issue that caused the horizontal scrollbar to not immediately appear/update when viewing data tables.
+- Fixed an issue that caused the vertical scrollbar to go past the viewport on the data table viewer.
+- Fixed an issue that caused two rows to be outside the visible viewport on the data table viewer.
+- Fixed an issue that would cause an ERR_LOG_OVERFLOW crash on I/O limited machines.
+- Fixed an issue that caused the animation preview dropdown to remain visible during texture previews, hiding the UV overlay buttons.
+- Fixed issue that prevented the texture atlas regions from being selectable.
+- Fixed issue that caused texture atlas region tooltips to render off-screen.
+- Fixed issue that caused the texture atlas region overlay to not align properly.
+- Removed deprecated Remote Control Protocol (RCP) system that was no longer maintained or used.
+
 ## 0.2.1 (01-10-2025)
 - Fixed an issue that caused the auto-updater to not restart wow.export after updating (update: this did not fix it, might still happen until next update).
 

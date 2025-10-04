@@ -4,6 +4,7 @@
 	License: MIT
  */
 
+const { doOnce } = require('../../generics');
 const log = require('../../log');
 const WDCReader = require('../WDCReader');
 const DBModelFileData = require('./DBModelFileData');
@@ -15,7 +16,7 @@ const itemDisplays = new Map();
 /**
  * Initialize item displays from ItemDisplayInfo.db2
 */
-const initializeItemDisplays = async () => {
+const initializeItemDisplays = doOnce('initializeItemDisplays', async () => {
 	if (itemDisplays.size > 0) return;
 	await DBTextureFileData.ensureInitialized();
 	
@@ -49,7 +50,7 @@ const initializeItemDisplays = async () => {
 	}
 
 	log.write('Loaded textures for %d items', itemDisplays.size);
-};
+});
 
 /**
  * Gets item skins from a given file data ID.

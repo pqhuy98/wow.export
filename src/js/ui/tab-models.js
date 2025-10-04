@@ -32,7 +32,7 @@ const textureExporter = require('./texture-exporter');
 const uvDrawer = require('./uv-drawer');
 const AnimMapper = require('../3D/AnimMapper');
 const CameraBounding = require('../3D/camera/CameraBounding');
-const { initCaches } = require('../db/caches/init-cache');
+const { initModelCaches } = require('../db/caches/init-cache');
 
 const MODEL_TYPE_M3 = Symbol('modelM3');
 const MODEL_TYPE_M2 = Symbol('modelM2');
@@ -417,7 +417,7 @@ const buildGeosetMaskForSkin = async (exporter, skin) => {
  * @param {number} exportID Export ID for tracking
  */
 const exportFilesWithSkins = async (models, isLocal = false, exportID = -1, options = {}) => {
-	await Promise.all(initCaches());
+	await Promise.all(initModelCaches());
 	const exportOptions = options || {};
 	const configSnapshot = Object.freeze({ ...core.view.config });
 	const exportPaths = exportOptions.useExportPathsStream === false ? null : core.openLastExportStream();
@@ -678,10 +678,6 @@ const exportFilesWithSkins = async (models, isLocal = false, exportID = -1, opti
 	// Write export information.
 	exportPaths?.close();
 
-	// Dispatch file manifest to RCP (optional for REST callers).
-	if (exportOptions.suppressRcpHook !== true)
-		core.rcp.dispatchHook('HOOK_EXPORT_COMPLETE', manifest);
-
 	// Also return manifest for REST callers.
 	return manifest;
 };
@@ -777,22 +773,6 @@ core.events.once('screen-tab-models', async () => {
 		log.write('Failed to initialize models tab: %o', error);
 		core.setToast('error', 'Failed to initialize models tab. Check the log for details.');
 	}
-});
-
-core.events.on('rcp-export-models', (models, id) => {
-	// RCP should provide an array of model objects with fileDataID and optional skin info
-	exportFilesWithSkins(models, false, id);
-});
-
-core.events.on('rcp-get-model-skins', (fileDataID, client) => {
-	// Get all available skins for the given model fileDataID
-	const skins = getAllSkinsForModel(fileDataID);
-
-	// Send the response back to the client
-	client.sendData('MODEL_SKINS', {
-		fileDataID: fileDataID,
-		skins
-	});
 });
 
 core.registerLoadFunc(async () => {

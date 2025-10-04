@@ -3,27 +3,28 @@
 	Authors: Kruithne <kruithne@gmail.com>
 	License: MIT
  */
-const util = require('util');
-const core = require('../core');
-const constants = require('../constants');
-
-const MAP_SIZE = constants.GAME.MAP_SIZE;
-const MAP_COORD_BASE = constants.GAME.MAP_COORD_BASE;
-const TILE_SIZE = constants.GAME.TILE_SIZE;
-
-// Persisted state for the map-viewer component. This generally goes against the
-// principals of reactive instanced components, but unfortunately nothing else worked
-// for maintaining state. This just means we can only have one map-viewer component.
-const state = {
-	offsetX: 0,
-	offsetY: 0,
-	zoomFactor: 2,
-	tileQueue: [],
-	selectCache: new Set(),
-	// Track queued/in-flight requests to avoid duplicates and reprioritize safely.
-	pendingRequests: new Set()
-};
-
+	const util = require('util');
+	const core = require('../core');
+	const constants = require('../constants');
+	
+	const MAP_SIZE = constants.GAME.MAP_SIZE;
+	const MAP_SIZE_SQ = constants.GAME.MAP_SIZE_SQ;
+	const MAP_COORD_BASE = constants.GAME.MAP_COORD_BASE;
+	const TILE_SIZE = constants.GAME.TILE_SIZE;
+	
+	// Persisted state for the map-viewer component. This generally goes against the
+	// principals of reactive instanced components, but unfortunately nothing else worked
+	// for maintaining state. This just means we can only have one map-viewer component.
+	const state = {
+		offsetX: 0,
+		offsetY: 0,
+		zoomFactor: 2,
+		tileQueue: [],
+		selectCache: new Set(),
+		// Track queued/in-flight requests to avoid duplicates and reprioritize safely.
+		pendingRequests: new Set()
+	};
+	
 module.exports = {
 	/**
 	 * loader: Tile loader function.
@@ -34,7 +35,6 @@ module.exports = {
 	 * selection: Array defining selected tiles.
 	 */
 	props: ['loader', 'tileSize', 'map', 'zoom', 'mask', 'selection'],
-	emits: ['update:selection'],
 
 	data: function() {
 		return {
@@ -52,11 +52,13 @@ module.exports = {
 	 */
 	mounted: function() {
 		// Store a local reference to the canvas context for faster rendering.
-		this.context = this.$refs.canvas.getContext('2d', { willReadFrequently: true });
-		this.overlayContext = this.$refs.overlayCanvas.getContext('2d');
+		this.context = this.$refs.canvas.getContext('2d');
 
-		state.doubleBuffer ??= document.createElement('canvas');
-		this.doubleBufferContext = state.doubleBuffer.getContext('2d');
+		// Ensure cache exists on first mount.
+		this.initializeCache();
+
+		// Internal RAF render throttle flag.
+		this._renderPending = false;
 
 		// Create anonymous pass-through functions for our event handlers
 		// to maintain context. We store them so we can unregister them later.
@@ -75,7 +77,7 @@ module.exports = {
 		// Register a resize listener onto the window so we can adjust.
 		// We use an anonymous function to maintain context, and store it
 		// on the instance so we can unregister later.
-		this.onResize = () => this.render();
+		this.onResize = () => this.scheduleRender();
 		window.addEventListener('resize', this.onResize);
 
 		// We need to also monitor for size changes to the canvas itself so we
@@ -84,7 +86,7 @@ module.exports = {
 		this.observer.observe(this.$el);
 
 		// Manually trigger an initial render.
-		this.render();
+		this.scheduleRender();
 	},
 
 	/**
@@ -103,12 +105,6 @@ module.exports = {
 
 		// Disconnect the resize observer for the canvas.
 		this.observer.disconnect();
-
-		// Clean up final pass timeout
-		if (state.finalPassTimeout) {
-			clearTimeout(state.finalPassTimeout);
-			state.finalPassTimeout = null;
-		}
 	},
 
 	watch: {
@@ -118,7 +114,7 @@ module.exports = {
 		 */
 		map: function() {
 			// Reset the cache.
-			this.clearTileState();
+			this.initializeCache();
 
 			// Set the map position to a default position.
 			// This will trigger a re-render for us too.
@@ -129,23 +125,117 @@ module.exports = {
 		 * Invoked when the tile being hovered over changes.
 		 */
 		hoverTile: function() {
-			this.renderOverlay();
+			this.scheduleRender();
 		}
 	},
 
 	methods: {
+			/**
+			 * Pick the best mip canvas for the requested draw size.
+			 */
+			pickMipCanvas: function(entry, drawSize) {
+				if (entry && entry.mips && entry.mips.sizes && entry.mips.canvases) {
+					const sizes = entry.mips.sizes;
+					const canvases = entry.mips.canvases;
+					// The sizes array is maintained in descending order. Scan from
+					// the smallest upward (end to start) to find the smallest mip >= drawSize.
+					for (let i = sizes.length - 1; i >= 0; i--) {
+						if (sizes[i] >= drawSize)
+							return canvases[i];
+					}
+					// No mip >= draw size, fall back to the largest available mip.
+					return canvases[0] || entry.canvas || null;
+				}
+				return entry && entry.canvas ? entry.canvas : null;
+			},
+
+			/**
+			 * Ensure an entry object exists for a cache index.
+			 */
+			ensureEntryForIndex: function(index) {
+				let entry = state.cache[index];
+				if (!entry || entry === true || entry === false)
+					entry = state.cache[index] = { mips: { sizes: [], canvases: [] } };
+				if (!entry.mips)
+					entry.mips = { sizes: [], canvases: [] };
+				return entry;
+			},
+
+			/**
+			 * Add a mip of a given size, scaled from baseCanvas, if missing.
+			 */
+			addMipIfMissing: function(entry, size, baseCanvas) {
+				const sizes = entry.mips.sizes;
+				if (sizes.indexOf(size) !== -1)
+					return;
+				const c = document.createElement('canvas');
+				c.width = size;
+				c.height = size;
+				const cctx = c.getContext('2d');
+				if (cctx) {
+					cctx.imageSmoothingEnabled = false;
+					cctx.drawImage(baseCanvas, 0, 0, size, size);
+				}
+				entry.mips.sizes.push(size);
+				entry.mips.canvases.push(c);
+				// Maintain sizes in descending order to match selection logic.
+				const pairs = entry.mips.sizes.map((s, i) => ({ s, c: entry.mips.canvases[i] }));
+				pairs.sort((a, b) => b.s - a.s);
+				entry.mips.sizes = pairs.map(p => p.s);
+				entry.mips.canvases = pairs.map(p => p.c);
+			},
+
+			/**
+			 * Populate mip chain for an entry from a base canvas/size.
+			 */
+			populateMipsFromBase: function(entry, baseCanvas, baseSize) {
+				// Always store the exact base size mip.
+				this.addMipIfMissing(entry, baseSize, baseCanvas);
+				// Generate pow2 mips down to a reasonable minimum (32px) similar to web.
+				let sizePow2 = 1;
+				const minDim = Math.min(baseCanvas.width, baseCanvas.height);
+				while (sizePow2 * 2 <= minDim)
+					sizePow2 *= 2;
+				for (let s = sizePow2; s >= 32; s = Math.floor(s / 2))
+					this.addMipIfMissing(entry, s, baseCanvas);
+			},
+
+			/**
+			 * Get the largest available mip size for an entry.
+			 */
+			getLargestMipSize: function(entry) {
+				if (entry && entry.mips && entry.mips.sizes && entry.mips.sizes.length > 0)
+					return entry.mips.sizes[0]; // sizes kept in descending order
+				if (entry && entry.size)
+					return entry.size;
+				return 0;
+			},
 		/**
-		 * Clear tile queue, requested set, and rendered set.
-		 * Also reset previous tracking to force full redraw.
+		 * Schedule a render using requestAnimationFrame, collapsing multiple
+		 * immediate render requests into a single frame.
 		 */
-		clearTileState: function() {
+		scheduleRender: function() {
+			if (this._renderPending)
+				return;
+
+			this._renderPending = true;
+			requestAnimationFrame(() => {
+				this._renderPending = false;
+				this.render();
+			});
+		},
+		/**
+		 * Initialize a fresh cache array.
+		 */
+		initializeCache: function() {
 			state.tileQueue = [];
 			state.cache = new Array(MAP_SIZE_SQ);
 			state.pendingRequests.clear();
+			this.awaitingTile = false;
 		},
 
 		/**
-		 * Process tiles in the loading queue up to the concurrency limit.
+		 * Process the next tile in the loading queue.
 		 */
 		checkTileQueue: function() {
 			if (state.tileQueue.length === 0) {
@@ -160,122 +250,7 @@ module.exports = {
 		},
 
 		/**
-		 * Perform a final pass to detect and fix tiles with transparency issues.
-		 * This addresses seams caused by tiles being clipped but still marked as rendered.
-		 */
-		performFinalPass: function() {
-			// Skip if no map or canvas available
-			if (this.map === null || !this.$refs.canvas)
-				return;
-
-			const canvas = this.$refs.canvas;
-			const ctx = this.context;
-			const viewport = this.$el;
-			const tileSize = Math.floor(this.tileSize / state.zoomFactor);
-			
-			// Calculate viewport bounds relative to canvas
-			const bufferX = (canvas.width - viewport.clientWidth) / 2;
-			const bufferY = (canvas.height - viewport.clientHeight) / 2;
-			
-			// Calculate visible tile range
-			const startX = Math.max(0, Math.floor(-state.offsetX / tileSize));
-			const startY = Math.max(0, Math.floor(-state.offsetY / tileSize));
-			const endX = Math.min(MAP_SIZE, startX + Math.ceil(canvas.width / tileSize) + 1);
-			const endY = Math.min(MAP_SIZE, startY + Math.ceil(canvas.height / tileSize) + 1);
-
-			const tilesNeedingRerender = [];
-
-			// Check each visible tile for transparency issues
-			for (let x = startX; x < endX; x++) {
-				for (let y = startY; y < endY; y++) {
-					const index = (x * MAP_SIZE) + y;
-					
-					// Skip if not masked or not supposedly rendered
-					if (this.mask && this.mask[index] !== 1)
-						continue;
-					if (!state.rendered.has(index))
-						continue;
-
-					const drawX = (x * tileSize) + state.offsetX;
-					const drawY = (y * tileSize) + state.offsetY;
-					
-					// Skip tiles completely outside viewport
-					if (drawX + tileSize <= bufferX || drawX >= bufferX + viewport.clientWidth ||
-						drawY + tileSize <= bufferY || drawY >= bufferY + viewport.clientHeight)
-						continue;
-
-					// Check if this tile has transparency where it shouldn't
-					if (this.tileHasUnexpectedTransparency(drawX, drawY, tileSize)) {
-						tilesNeedingRerender.push({ x, y, index, tileSize });
-						// Remove from rendered set so it can be re-queued
-						state.rendered.delete(index);
-						state.requested.delete(index);
-					}
-				}
-			}
-
-			// Re-queue tiles that need re-rendering
-			for (const tile of tilesNeedingRerender) {
-				this.queueTile(tile.x, tile.y, tile.index, tile.tileSize);
-			}
-		},
-
-		/**
-		 * Check if a tile has unexpected transparency (indicating clipping issues).
-		 * Uses efficient sampling to detect transparency without checking every pixel.
-		 * @param {number} drawX Canvas X position of tile
-		 * @param {number} drawY Canvas Y position of tile  
-		 * @param {number} tileSize Size of tile
-		 * @returns {boolean} True if tile has unexpected transparency
-		 */
-		tileHasUnexpectedTransparency: function(drawX, drawY, tileSize) {
-			const canvas = this.$refs.canvas;
-			const ctx = this.context;
-			
-			// Clamp tile bounds to canvas
-			const left = Math.max(0, Math.floor(drawX));
-			const top = Math.max(0, Math.floor(drawY));
-			const right = Math.min(canvas.width, Math.ceil(drawX + tileSize));
-			const bottom = Math.min(canvas.height, Math.ceil(drawY + tileSize));
-			
-			// Skip if tile is completely outside canvas
-			if (left >= right || top >= bottom)
-				return false;
-			
-			const width = right - left;
-			const height = bottom - top;
-			
-			if (width < 4 || height < 4)
-				return false;
-
-			try {
-				const imageData = ctx.getImageData(left, top, width, height);
-				const data = imageData.data;
-				
-				const samplePoints = [
-					[0, 0], [width - 1, 0], [0, height - 1], [width - 1, height - 1], // corners
-					[Math.floor(width / 2), 0], [Math.floor(width / 2), height - 1], // top/bottom center
-					[0, Math.floor(height / 2)], [width - 1, Math.floor(height / 2)], // left/right center
-					[Math.floor(width / 2), Math.floor(height / 2)] // center
-				];
-
-				for (const [px, py] of samplePoints) {
-					const index = (py * width + px) * 4;
-					const alpha = data[index + 3]; // Alpha channel
-					
-					if (alpha === 0)
-						return true;
-				}
-
-				return false;
-				
-			} catch (error) {
-				return false;
-			}
-		},
-
-		/**
-		 * Add a tile to the queue to be loaded if not already requested.
+		 * Add a tile to the queue to be loaded.
 		 * @param {number} x 
 		 * @param {number} y 
 		 * @param {number} index 
@@ -324,19 +299,26 @@ module.exports = {
 		 */
 		loadTile: function(tile) {
 			this.awaitingTile = true;
-			state.activeTileRequests++;
 
-			const [x, y, index, tileSize, renderTarget = 'main'] = tile;
-			const currentZoomFactor = state.zoomFactor;
+			const [x, y, index, tileSize] = tile;
 
-			this.loader(x, y, tileSize).then(data => {
+			// We need to use a local reference to the cache so that async callbacks
+			// for tile loading don't overwrite the most current cache if they resolve
+			// after a new map has been selected. 
+			const cache = state.cache;
+
+		this.loader(x, y, tileSize).then(data => {
 				if (data !== false && data) {
-					// Convert ImageData to an offscreen canvas and store with size metadata.
-					const canvas = document.createElement('canvas');
-					canvas.width = data.width;
-					canvas.height = data.height;
-					canvas.getContext('2d').putImageData(data, 0, 0);
-					cache[index] = { canvas, size: tileSize };
+					// Convert ImageData to an offscreen canvas and store with mip metadata.
+					const baseCanvas = document.createElement('canvas');
+					baseCanvas.width = data.width;
+					baseCanvas.height = data.height;
+					baseCanvas.getContext('2d').putImageData(data, 0, 0);
+					const entry = this.ensureEntryForIndex(index);
+					entry.canvas = baseCanvas; // fallback/base
+					entry.size = Math.max(entry.size || 0, tileSize);
+					this.populateMipsFromBase(entry, baseCanvas, tileSize);
+					cache[index] = entry;
 				} else {
 					cache[index] = false;
 				}
@@ -344,7 +326,7 @@ module.exports = {
 				// Mark request complete for this tile/size
 				state.pendingRequests.delete(index + ':' + tileSize);
 
-				this.render();
+				this.scheduleRender();
 				this.checkTileQueue();
 			});
 		},
@@ -381,29 +363,8 @@ module.exports = {
 			this.setMapPosition(posX, posY);
 		},
 
-
 		/**
-		 * Calculate optimal canvas dimensions based on tile size and zoom levels.
-		 * Canvas is sized to accommodate full tiles with a buffer zone that ensures
-		 * tiles are never rendered partially at any zoom level.
-		 */
-		calculateCanvasSize: function() {
-			const viewport = this.$el;
-			const viewportWidth = viewport.clientWidth;
-			const viewportHeight = viewport.clientHeight;
-
-			// Buffer must be large enough for the largest possible tile (zoom factor = 1)
-			const maxTileSize = this.tileSize; // At zoom factor 1 (most zoomed in)
-			
-			// Canvas needs to be viewport size + buffer on all sides to ensure full tiles
-			return {
-				width: viewportWidth + (maxTileSize * 2), // +1 tile buffer on each side
-				height: viewportHeight + (maxTileSize * 2) // +1 tile buffer on each side
-			};
-		},
-
-		/**
-		 * Update the position of the internal container with double-buffer optimization.
+		 * Update the position of the internal container.
 		 */
 		render: function() {
 			// If no map has been selected, do not render.
@@ -415,234 +376,56 @@ module.exports = {
 			if (!canvas)
 				return;
 
-			// Calculate optimal canvas size
-			const canvasSize = this.calculateCanvasSize();
-			
-			// Update canvas dimensions only if they've changed to avoid unnecessary redraws
-			if (canvas.width !== canvasSize.width || canvas.height !== canvasSize.height) {
-				canvas.width = canvasSize.width;
-				canvas.height = canvasSize.height;
-
-				// Force full redraw when canvas size changes
-				state.prevOffsetX = null;
-				state.prevOffsetY = null;
-				state.prevZoomFactor = null;
+			// DPI-aware canvas sizing; operate in CSS pixel space via transform.
+			const dpr = Math.max(1, Math.min(3, Math.floor(window.devicePixelRatio || 1)));
+			const cssW = canvas.offsetWidth;
+			const cssH = canvas.offsetHeight;
+			if (canvas.width !== Math.floor(cssW * dpr) || canvas.height !== Math.floor(cssH * dpr)) {
+				canvas.width = Math.floor(cssW * dpr);
+				canvas.height = Math.floor(cssH * dpr);
+				this.context.setTransform(dpr, 0, 0, dpr, 0, 0);
 			}
 
-			// Update double-buffer dimensions to match
-			if (state.doubleBuffer.width !== canvasSize.width || state.doubleBuffer.height !== canvasSize.height) {
-				state.doubleBuffer.width = canvasSize.width;
-				state.doubleBuffer.height = canvasSize.height;
-			}
+			// Viewport width/height defines what is visible to the user.
+			const viewport = this.$el;
+			const viewportWidth = viewport.clientWidth;
+			const viewportHeight = viewport.clientHeight;
 
-			// Update overlay canvas dimensions to match
-			const overlayCanvas = this.$refs.overlayCanvas;
-			if (overlayCanvas) {
-				if (overlayCanvas.width !== canvasSize.width || overlayCanvas.height !== canvasSize.height) {
-					overlayCanvas.width = canvasSize.width;
-					overlayCanvas.height = canvasSize.height;
-				}
-			}
+			// Calculate which tiles will appear within the viewer.
+			let tileSize = Math.floor(this.tileSize / state.zoomFactor);
+			tileSize = Math.max(1, tileSize);
 
-			// Calculate current tile size based on zoom factor
-			const tileSize = Math.floor(this.tileSize / state.zoomFactor);
-
-			// Check if this is a simple pan (same zoom, only offset changed)
-			const isPan = state.prevZoomFactor === state.zoomFactor && 
-						  state.prevOffsetX !== null && state.prevOffsetY !== null;
-
-			if (isPan)
-				this.renderWithDoubleBuffer(canvas, canvasSize, tileSize);
-			else
-				this.renderFullRedraw(canvas, canvasSize, tileSize);
-
-			// Mark that we may need a final pass to check for clipping issues
-			state.needsFinalPass = true;
-
-			// Update previous state for next render
-			state.prevOffsetX = state.offsetX;
-			state.prevOffsetY = state.offsetY;
-			state.prevZoomFactor = state.zoomFactor;
-
-			// Render overlays after main canvas rendering
-			this.renderOverlay();
-		},
-
-		/**
-		 * Render using double-buffer technique for efficient panning.
-		 */
-		renderWithDoubleBuffer: function(canvas, canvasSize, tileSize) {
+			// Get local reference to the canvas context.
 			const ctx = this.context;
 			ctx.imageSmoothingEnabled = false;
+			// Clear the full frame once per render to avoid per-tile clears
+			ctx.clearRect(0, 0, cssW, cssH);
 
-			// Copy current canvas to double-buffer with the new offset applied
-			doubleCtx.clearRect(0, 0, canvasSize.width, canvasSize.height);
-			doubleCtx.drawImage(canvas, deltaX, deltaY);
+			// We need to use a local reference to the cache so that async callbacks
+			// for tile loading don't overwrite the most current cache if they resolve
+			// after a new map has been selected. 
+			const cache = state.cache;
 
-			const viewport = this.$el;
-			const bufferX = (canvas.width - viewport.clientWidth) / 2;
-			const bufferY = (canvas.height - viewport.clientHeight) / 2;
+			// Compute visible tile range to avoid iterating the full grid.
+			const startX = Math.max(0, Math.floor((-state.offsetX) / tileSize) - 1);
+			const endX = Math.min(MAP_SIZE - 1, Math.floor((viewportWidth - state.offsetX) / tileSize) + 1);
+			const startY = Math.max(0, Math.floor((-state.offsetY) / tileSize) - 1);
+			const endY = Math.min(MAP_SIZE - 1, Math.floor((viewportHeight - state.offsetY) / tileSize) + 1);
 
-			// Calculate which tiles should be visible in the current view
-			const startX = Math.max(0, Math.floor(-state.offsetX / tileSize));
-			const startY = Math.max(0, Math.floor(-state.offsetY / tileSize));
-			const endX = Math.min(MAP_SIZE, startX + Math.ceil(canvas.width / tileSize) + 1);
-			const endY = Math.min(MAP_SIZE, startY + Math.ceil(canvas.height / tileSize) + 1);
-
-			// Track tiles that should be visible but aren't rendered
-			const missingTiles = [];
-			const trackedTiles = [];
-
-			// Check all tiles in the visible range
-			for (let x = startX; x < endX; x++) {
-				for (let y = startY; y < endY; y++) {
-					const index = (x * MAP_SIZE) + y;
-
-					// Skip if this tile is masked out
-					if (this.mask && this.mask[index] !== 1)
-						continue;
-
+			// Iterate only visible tiles.
+			for (let x = startX; x <= endX; x++) {
+				for (let y = startY; y <= endY; y++) {
+					// drawX/drawY is the absolute position to draw this tile.
 					const drawX = (x * tileSize) + state.offsetX;
 					const drawY = (y * tileSize) + state.offsetY;
-					
-					// Check if this tile should be visible in viewport
-					const isInViewport = !(drawX + tileSize <= bufferX || drawX >= bufferX + viewport.clientWidth ||
-											drawY + tileSize <= bufferY || drawY >= bufferY + viewport.clientHeight);
 
-					if (isInViewport) {
-						if (!state.rendered.has(index)) {
-							missingTiles.push({ x, y, index, drawX, drawY });
-							this.queueTileForDoubleBuffer(x, y, index, tileSize);
-						} else {
-							trackedTiles.push({ x, y, index });
-						}
-					}
-				}
-			}
-
-			// Clean up tiles that are no longer visible anywhere on canvas
-			const tilesToRemove = [];
-			for (const index of state.rendered) {
-				const x = Math.floor(index / MAP_SIZE);
-				const y = index % MAP_SIZE;
-				const drawX = (x * tileSize) + state.offsetX;
-				const drawY = (y * tileSize) + state.offsetY;
-				
-				if (drawX + tileSize <= 0 || drawX >= canvas.width || drawY + tileSize <= 0 || drawY >= canvas.height)
-					tilesToRemove.push(index);
-			}
-			
-			for (let i = 0; i < tilesToRemove.length; i++)
-				state.rendered.delete(tilesToRemove[i]);
-
-
-			// Copy double-buffer back to main canvas
-			ctx.clearRect(0, 0, canvas.width, canvas.height);
-			ctx.drawImage(state.doubleBuffer, 0, 0);
-		},
-
-		/**
-		 * Render with full redraw (used for zoom changes, map changes, etc.).
-		 */
-		renderFullRedraw: function(canvas, canvasSize, tileSize) {
-			const ctx = this.context;
-
-			// Clear the entire canvas and rendered set
-			ctx.clearRect(0, 0, canvas.width, canvas.height);
-			state.rendered.clear();
-
-			// Calculate which tiles are visible
-			const startX = Math.max(0, Math.floor(-state.offsetX / tileSize));
-			const startY = Math.max(0, Math.floor(-state.offsetY / tileSize));
-			const endX = Math.min(MAP_SIZE, startX + Math.ceil(canvas.width / tileSize) + 1);
-			const endY = Math.min(MAP_SIZE, startY + Math.ceil(canvas.height / tileSize) + 1);
-
-			const viewport = this.$el;
-			const bufferX = (canvas.width - viewport.clientWidth) / 2;
-			const bufferY = (canvas.height - viewport.clientHeight) / 2;
-
-			// Queue all visible tiles for loading
-			for (let x = startX; x < endX; x++) {
-				for (let y = startY; y < endY; y++) {
-					const drawX = (x * tileSize) + state.offsetX;
-					const drawY = (y * tileSize) + state.offsetY;
-					
-					if (drawX + tileSize <= bufferX || drawX >= bufferX + viewport.clientWidth ||
-						drawY + tileSize <= bufferY || drawY >= bufferY + viewport.clientHeight)
-						continue;
-
+					// Cache is a one-dimensional array, calculate the index as such.
 					const index = (x * MAP_SIZE) + y;
-
-					// Skip if this tile is masked out
-					if (this.mask && this.mask[index] !== 1)
-						continue;
-
-					// Queue tile for loading
-					this.queueTile(x, y, index, tileSize);
-				}
-			}
-		},
-
-		/**
-		 * Render only the overlay canvas with selection and hover states.
-		 */
-		renderOverlay: function() {
-			// If no map has been selected, do not render.
-			if (this.map === null)
-				return;
-
-			// Get overlay canvas reference
-			const overlayCanvas = this.$refs.overlayCanvas;
-			if (!overlayCanvas)
-				return;
-
-			const overlayCtx = this.overlayContext;
-			if (!overlayCtx)
-				return;
-
-			// Clear the overlay canvas
-			overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-
-			// Calculate current tile size based on zoom factor
-			const tileSize = Math.floor(this.tileSize / state.zoomFactor);
-			const canvas = this.$refs.canvas;
-
-			// Calculate which tiles might be visible
-			const startX = Math.max(0, Math.floor(-state.offsetX / tileSize));
-			const startY = Math.max(0, Math.floor(-state.offsetY / tileSize));
-			const endX = Math.min(MAP_SIZE, startX + Math.ceil(canvas.width / tileSize) + 1);
-			const endY = Math.min(MAP_SIZE, startY + Math.ceil(canvas.height / tileSize) + 1);
-
-			const viewport = this.$el;
-			const bufferX = (canvas.width - viewport.clientWidth) / 2;
-			const bufferY = (canvas.height - viewport.clientHeight) / 2;
-
-			// Render overlays for visible tiles
-			for (let x = startX; x < endX; x++) {
-				for (let y = startY; y < endY; y++) {
-					const drawX = (x * tileSize) + state.offsetX;
-					const drawY = (y * tileSize) + state.offsetY;
-					
-					if (drawX + tileSize <= bufferX || drawX >= bufferX + viewport.clientWidth ||
-						drawY + tileSize <= bufferY || drawY >= bufferY + viewport.clientHeight)
-						continue;
-
-					const index = (x * MAP_SIZE) + y;
+					const cached = cache[index];
 
 					// This chunk is masked out, so skip rendering it.
 					if (this.mask && this.mask[index] !== 1)
 						continue;
-
-					// Skip tiles that are not in (or around) the viewport.
-					if (drawX > (viewportWidth + tileSize) || drawY > (viewportHeight + tileSize) || drawX + tileSize < -tileSize || drawY + tileSize < -tileSize) {
-						// Clear out cache entries for tiles no longer in viewport.
-						if (cached !== undefined) {
-							ctx.clearRect(drawX, drawY, tileSize, tileSize);
-							cache[index] = undefined;
-						}
-
-						continue;
-					}
 
 					// No cache, request it (async) then skip.
 					if (cached === undefined) {
@@ -651,38 +434,50 @@ module.exports = {
 
 						// Add this tile to the loading queue.
 						this.queueTile(x, y, index, tileSize);
-					} else if (cached && cached.canvas) {
-						// Always render what's available to avoid blanking.
-						if (cached.size === tileSize)
-							ctx.drawImage(cached.canvas, drawX, drawY);
-						else {
-							ctx.drawImage(cached.canvas, drawX, drawY, tileSize, tileSize);
-							// If size mismatch, request an updated tile in the background.
-							if (cached.requestedSize !== tileSize) {
-								cached.requestedSize = tileSize;
-								this.queueTile(x, y, index, tileSize);
-							}
+				} else if (cached && cached.canvas) {
+					// Upgrade legacy single-canvas cache entry to mip-aware entry on the fly.
+					if (!cached.mips) {
+						const upgraded = this.ensureEntryForIndex(index);
+						upgraded.canvas = cached.canvas;
+						upgraded.size = cached.size || cached.canvas.width;
+						this.populateMipsFromBase(upgraded, cached.canvas, upgraded.size);
+						state.cache[index] = cached = upgraded;
+					}
+					const src = this.pickMipCanvas(cached, tileSize) || cached.canvas;
+					if (src)
+						ctx.drawImage(src, drawX, drawY, tileSize, tileSize);
+					// If our largest mip is smaller than requested draw size, request a higher-res tile.
+					if (this.getLargestMipSize(cached) < tileSize) {
+						if (cached.requestedSize !== tileSize) {
+							cached.requestedSize = tileSize;
+							this.queueTile(x, y, index, tileSize);
 						}
+					}
 					} else if (cached instanceof ImageData) {
 						// Backward compatibility: convert ImageData cache into a canvas once.
 						const tmp = document.createElement('canvas');
 						tmp.width = cached.width;
 						tmp.height = cached.height;
 						tmp.getContext('2d').putImageData(cached, 0, 0);
-						cache[index] = { canvas: tmp };
-						ctx.drawImage(tmp, drawX, drawY, tileSize, tileSize);
+						const entry = this.ensureEntryForIndex(index);
+						entry.canvas = tmp;
+						entry.size = tmp.width;
+						this.populateMipsFromBase(entry, tmp, tmp.width);
+						cache[index] = entry;
+						const src = this.pickMipCanvas(entry, tileSize) || tmp;
+						ctx.drawImage(src, drawX, drawY, tileSize, tileSize);
 					}
 
 					// Draw the selection overlay if this tile is selected.
 					if (this.selection.includes(index)) {
-						overlayCtx.fillStyle = 'rgba(159, 241, 161, 0.5)';
-						overlayCtx.fillRect(drawX, drawY, tileSize, tileSize);	
+						ctx.fillStyle = 'rgba(159, 241, 161, 0.5)';
+						ctx.fillRect(drawX, drawY, tileSize, tileSize);	
 					}
 
 					// Draw the hover overlay if this tile is hovered over.
 					if (this.hoverTile === index) {
-						overlayCtx.fillStyle = 'rgba(87, 175, 226, 0.5)';
-						overlayCtx.fillRect(drawX, drawY, tileSize, tileSize);
+						ctx.fillStyle = 'rgba(87, 175, 226, 0.5)';
+						ctx.fillRect(drawX, drawY, tileSize, tileSize);
 					}
 				}
 			}
@@ -704,18 +499,16 @@ module.exports = {
 					return;
 				}
 
-				const newSelection = [];
+				this.selection.length = 0; // Reset the selection array.
 				
 				// Iterate over all available tiles in the mask and select them.
 				for (let i = 0, n = this.mask.length; i < n; i++) {
 					if (this.mask[i] === 1)
-						newSelection.push(i);
+						this.selection.push(i);
 				}
 
-				this.$emit('update:selection', newSelection);
-
-				// Trigger an overlay re-render to show the new selection.
-				this.renderOverlay();
+			// Trigger a re-render to show the new selection.
+			this.scheduleRender();
 				
 				// Absorb this event preventing further action.
 				event.preventDefault();
@@ -742,6 +535,10 @@ module.exports = {
 				// If we have a WDT, and this tile is not defined, disallow selection.
 				if (this.mask[index] !== 1)
 					return;
+			} else {
+				// No WDT, disallow selection if tile is not rendered.
+				if (typeof state.cache[index] !== 'object')
+					return;
 			}
 
 			const check = this.selection.indexOf(index);
@@ -753,8 +550,8 @@ module.exports = {
 			else if (!this.selectState && check === -1)
 				this.selection.push(index);
 
-			// Trigger an overlay re-render to show the selection change.
-			this.renderOverlay();
+		// Trigger a re-render so the overlay updates.
+		this.scheduleRender();
 		},
 
 		/**
@@ -774,7 +571,7 @@ module.exports = {
 				state.offsetY = this.panBaseY - deltaY;
 
 				// Offsets are not reactive, manually trigger an update.
-				this.render();
+				this.scheduleRender();
 			}
 		},
 
@@ -821,17 +618,12 @@ module.exports = {
 		 */
 		mapPositionFromClientPoint: function(x, y) {
 			const viewport = this.$el.getBoundingClientRect();
-			const canvas = this.$refs.canvas;
 			
-			// Calculate canvas position relative to viewport (centered)
-			const canvasOffsetX = (viewport.width - canvas.width) / 2;
-			const canvasOffsetY = (viewport.height - canvas.height) / 2;
-			
-			// Convert client coordinates to canvas coordinates
-			const viewOfsX = (x - viewport.x - canvasOffsetX) - state.offsetX;
-			const viewOfsY = (y - viewport.y - canvasOffsetY) - state.offsetY;
+			const viewOfsX = (x - viewport.x) - state.offsetX;
+			const viewOfsY = (y - viewport.y) - state.offsetY;
 
-			const tileSize = Math.floor(this.tileSize / state.zoomFactor);
+			let tileSize = Math.floor(this.tileSize / state.zoomFactor);
+			tileSize = Math.max(1, tileSize);
 
 			const tileX = viewOfsX / tileSize;
 			const tileY = viewOfsY / tileSize;
@@ -852,17 +644,17 @@ module.exports = {
 			const posX = y;
 			const posY = x;
 
-			const tileSize = Math.floor(this.tileSize / state.zoomFactor);
+			let tileSize = Math.floor(this.tileSize / state.zoomFactor);
+			tileSize = Math.max(1, tileSize);
 
 			const ofsX = (((posX - MAP_COORD_BASE) / TILE_SIZE) * tileSize);
 			const ofsY = (((posY - MAP_COORD_BASE) / TILE_SIZE) * tileSize);
 
 			const viewport = this.$el;
-			const maxTileSize = this.tileSize;
-			state.offsetX = ofsX + (viewport.clientWidth / 2) + maxTileSize;
-			state.offsetY = ofsY + (viewport.clientHeight / 2) + maxTileSize;
+			state.offsetX = ofsX + (viewport.clientWidth / 2);
+			state.offsetY = ofsY + (viewport.clientHeight / 2);
 
-			this.render();
+			this.scheduleRender();
 		},
 
 		/**
@@ -915,7 +707,8 @@ module.exports = {
 				const localY = event.clientY - rect.y;
 
 				// Compute fractional tile coordinates under the cursor at current zoom.
-				const oldTileSize = Math.floor(this.tileSize / state.zoomFactor);
+				let oldTileSize = Math.floor(this.tileSize / state.zoomFactor);
+				oldTileSize = Math.max(1, oldTileSize);
 				const fracTileX = (localX - state.offsetX) / oldTileSize;
 				const fracTileY = (localY - state.offsetY) / oldTileSize;
 
@@ -923,11 +716,12 @@ module.exports = {
 				this.setZoomFactor(newZoom);
 
 				// Recompute offsets so the same world point stays under the cursor.
-				const newTileSize = Math.floor(this.tileSize / state.zoomFactor);
+				let newTileSize = Math.floor(this.tileSize / state.zoomFactor);
+				newTileSize = Math.max(1, newTileSize);
 				state.offsetX = localX - (fracTileX * newTileSize);
 				state.offsetY = localY - (fracTileY * newTileSize);
 
-				this.render();
+				this.scheduleRender();
 			}
 		}
 	},
@@ -944,6 +738,5 @@ module.exports = {
 		</div>
 		<div class="hover-info">{{ hoverInfo }}</div>
 		<canvas ref="canvas"></canvas>
-		<canvas ref="overlayCanvas" class="overlay-canvas"></canvas>
 	</div>`
 };

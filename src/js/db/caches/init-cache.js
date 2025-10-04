@@ -4,7 +4,7 @@ const DBCreatures = require('./DBCreatures');
 const DBTextureFileData = require('./DBTextureFileData');
 
 module.exports = {
-  initCaches: () => [
+  initModelCaches: () => [
     DBModelFileData.initializeModelFileData(),
     DBItemDisplays.initializeItemDisplays(),
     DBCreatures.initializeCreatureData(),
