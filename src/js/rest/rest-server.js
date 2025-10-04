@@ -481,7 +481,7 @@ class RestServer {
 		}
 
 		const exportID = this.nextExportID();
-		const tileIndex = tileY * 64 + tileX;
+		const tileIndex = tileX * 64 + tileY;
 
 		// Build request-specific options without mutating global config
 		const requestOptions = buildADTExportOptions(core.view.config, {
@@ -500,11 +500,13 @@ class RestServer {
 		try {
 
 			const quality = body.quality !== undefined ? Number(body.quality) : 4096;
-			const exportDir = path.join(core.view.config.exportDirectory, 'adt', mapDir);
-			await fs.promises.mkdir(exportDir, { recursive: true });
+			// Match UI export layout: <exportDir>/maps/<mapDir>
+			const baseDir = ExportHelper.getExportPath(path.join('maps', mapDir));
+			await fs.promises.mkdir(baseDir, { recursive: true });
 
 			const exporter = new ADTExporter(mapID, mapDir, tileIndex);
-			const helper = new ExportHelper(1);
+			const helper = new ExportHelper(1, 'tile');
+			helper.start();
 
 			// Optional game objects set
 			let gameObjects = body.gameObjects ? new Set(body.gameObjects) : undefined;
@@ -516,7 +518,11 @@ class RestServer {
 				});
 			}
 
-			const result = await exporter.export(exportDir, quality, gameObjects, helper, requestOptions);
+			const result = await exporter.export(baseDir, quality, gameObjects, helper, requestOptions);
+			// Mirror UI marking to ensure toast tracker completes
+			const markPath = path.join('maps', mapDir, mapDir);
+			helper.mark(markPath, true);
+			helper.finish(false);
 
 			// Keep WDT cache across REST exports for perf; only clear on build change above
 
@@ -530,7 +536,7 @@ class RestServer {
 				tileX,
 				tileY,
 				tileIndex,
-				exportPath: exportDir,
+				exportPath: baseDir,
 				exportType: result.type,
 				mainFile: result.path ? path.relative(core.view.config.exportDirectory, result.path) : null
 			};
