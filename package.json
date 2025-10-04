@@ -7,6 +7,10 @@
 		"Kruithne <kruithne@gmail.com> (https://kruithne.net/)",
 		"Marlamin <marlamin@marlamin.com> (https://marlamin.com/)"
 	],
+	"scripts": {
+		"build": "bun build.js win-x64",
+		"build-linux": "bun build.js linux-x64"
+	},
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/Kruithne/wow.export.git"

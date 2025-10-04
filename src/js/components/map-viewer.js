@@ -421,7 +421,7 @@ module.exports = {
 
 					// Cache is a one-dimensional array, calculate the index as such.
 					const index = (x * MAP_SIZE) + y;
-					const cached = cache[index];
+					let cached = cache[index];
 
 					// This chunk is masked out, so skip rendering it.
 					if (this.mask && this.mask[index] !== 1)
