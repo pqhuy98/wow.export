@@ -543,6 +543,8 @@ const exportFilesWithSkins = async (models, isLocal = false, exportID = -1, opti
 					variantTextureIDs = getVariantTextureIDs(fileName);
 				}
 
+				console.log({fileName, skinName, selectedSkinName});
+
 				let exportPath;
 				if (isLocal) {
 					exportPath = fileName;

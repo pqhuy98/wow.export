@@ -308,6 +308,7 @@ class RestServer {
 		try {
 			const result = await modelsService.exportFilesWithSkins(models, false, exportID, {
 				useExportPathsStream: false,
+				ignoreViewerState: true,
 				skipGlobalCacheInvalidation: true
 			});
 			const succeeded = Array.isArray(result?.succeeded) ? result.succeeded.length : 0;
