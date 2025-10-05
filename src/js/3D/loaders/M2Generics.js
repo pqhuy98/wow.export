@@ -14,6 +14,60 @@ class M2Track {
 	}
 }
 
+// M2 SplineKey value readers for tracks like camera.position/target/roll/FoV
+function read_spline_key_array(data, valueType) {
+    // Each key: time (uint32), value (C3Vector or float), inTan (same type), outTan (same type)
+    // But wowdev uses M2Track<M2SplineKey<T>> where timestamps are in the parent track.
+    // In MD21, values array-of-arrays stores M2SplineKey<T> sequentially per key.
+    switch (valueType) {
+        case "float":
+            return [
+                data.readFloatLE(), // value
+                data.readFloatLE(), // inTan
+                data.readFloatLE()  // outTan
+            ];
+        case "float3":
+            return [
+                data.readFloatLE(3),
+                data.readFloatLE(3),
+                data.readFloatLE(3)
+            ];
+        default:
+            throw new Error(`Unsupported spline key valueType: ${valueType}`);
+    }
+}
+
+function read_m2_spline_track(data, ofs, valueType) {
+    const interpolation = data.readUInt16LE();
+    const globalSeq = data.readUInt16LE();
+
+    const timestamps = read_m2_array_array(data, ofs, "uint32");
+    // Values are arrays of M2SplineKey<T>: for each key, value + inTan + outTan
+    const arrCount = data.readUInt32LE();
+    const arrOfs = data.readUInt32LE();
+
+    const base = data.offset;
+    data.seek(ofs + arrOfs);
+
+    const values = Array(arrCount);
+    for (let i = 0; i < arrCount; i++) {
+        const subArrCount = data.readUInt32LE();
+        const subArrOfs = data.readUInt32LE();
+        const subBase = data.offset;
+        data.seek(ofs + subArrOfs);
+
+        values[i] = Array(subArrCount);
+        for (let j = 0; j < subArrCount; j++) {
+            values[i][j] = read_spline_key_array(data, valueType);
+        }
+
+        data.seek(subBase);
+    }
+
+    data.seek(base);
+    return new M2Track(globalSeq, interpolation, timestamps, values);
+}
+
 // See https://wowdev.wiki/M2#Standard_animation_block
 function read_m2_array_array(data, ofs, dataType, useAnims = false, animFiles = new Map()) {
 	const arrCount = data.readUInt32LE();
@@ -189,4 +243,4 @@ function read_m2_part_track(data, ofs, valueType) {
     return { timestamps, values };
 }
 
-module.exports = { M2Track, read_m2_array_array, read_m2_track, read_caa_bb, read_m2_array, read_m2_part_track }
+module.exports = { M2Track, read_m2_array_array, read_m2_track, read_caa_bb, read_m2_array, read_m2_part_track, read_m2_spline_track }

@@ -576,6 +576,8 @@ class M2Exporter {
 				fileName: skin.fileName,
 				fileDataID: skin.fileDataID
 			});
+			json.addProperty('cameras', this.m2.cameras || []);
+			json.addProperty('cameraLookup', this.m2.cameraLookup || []);
 			json.addProperty('ribbonEmitters', this.m2.ribbonEmitters || []);
 			json.addProperty('particleEmitters', this.m2.particleEmitters || []);
 

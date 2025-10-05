@@ -241,8 +241,8 @@ class M2Loader {
 		this.data.move(8); // attachmentIndicesByID / attachment_lookup_table
 		this.data.move(8); // events
 		this.parseChunk_MD21_lights(ofs);
-		this.data.move(8); // cameras
-		this.data.move(8); // camera_lookup_table
+		this.parseChunk_MD21_cameras(ofs);
+		this.parseChunk_MD21_camera_lookup(ofs);
 		this.parseChunk_MD21_ribbon_emitters(ofs);
 		this.parseChunk_MD21_particle_emitters(ofs);
 		
@@ -250,6 +250,75 @@ class M2Loader {
 		// if (this.flags & 0x8)
 		// 	this.data.move(8);
 
+	}
+
+	/**
+	 * Parse cameras from MD21 chunk.
+	 * @param {number} ofs
+	 */
+	parseChunk_MD21_cameras(ofs) {
+		const count = this.data.readUInt32LE();
+		const tableOfs = this.data.readUInt32LE();
+		if (count === 0 || tableOfs === 0) return;
+
+		const base = this.data.offset;
+		this.data.seek(tableOfs + ofs);
+
+		this.cameras = new Array(count);
+		for (let i = 0; i < count; i++) {
+			const type = this.data.readInt32LE();
+			// Pre-Cata had a single float fov after type. Most modern M2s use tracked FoV at end.
+			// We can't reliably branch by version here without additional flags; skip legacy fov.
+			// Read clipping planes
+			const far_clip = this.data.readFloatLE();
+			const near_clip = this.data.readFloatLE();
+			// Tracks (spline-key based)
+			const positions = M2Generics.read_m2_spline_track(this.data, ofs, 'float3');
+			const position_base = this.data.readFloatLE(3);
+			const target_position = M2Generics.read_m2_spline_track(this.data, ofs, 'float3');
+			const target_position_base = this.data.readFloatLE(3);
+			const roll = M2Generics.read_m2_spline_track(this.data, ofs, 'float');
+			// Cata+: FoV track
+			let FoV = null;
+			try {
+				FoV = M2Generics.read_m2_spline_track(this.data, ofs, 'float');
+			} catch (e) {
+				FoV = null;
+			}
+
+			// Coordinate conversion for bases, like bones/attachments: x=x, y=z, z=-y
+			const convPosBase = [position_base[0], position_base[2], position_base[1] * -1];
+			const convTargetBase = [target_position_base[0], target_position_base[2], target_position_base[1] * -1];
+
+			this.cameras[i] = {
+				type,
+				far_clip,
+				near_clip,
+				positions,
+				position_base: convPosBase,
+				target_position,
+				target_position_base: convTargetBase,
+				roll,
+				FoV
+			};
+		}
+
+		this.data.seek(base);
+	}
+
+	/**
+	 * Parse camera lookup table from MD21 chunk.
+	 * @param {number} ofs
+	 */
+	parseChunk_MD21_camera_lookup(ofs) {
+		const count = this.data.readUInt32LE();
+		const tableOfs = this.data.readUInt32LE();
+		if (count === 0 || tableOfs === 0) return;
+
+		const base = this.data.offset;
+		this.data.seek(tableOfs + ofs);
+		this.cameraLookup = this.data.readUInt16LE(count);
+		this.data.seek(base);
 	}
 
 	parseChunk_MD21_bones(ofs, useAnims = false) {
