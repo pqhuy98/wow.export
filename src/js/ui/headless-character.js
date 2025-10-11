@@ -194,10 +194,10 @@ function releaseExporter(fileDataID, exporter) {
         pool.push(exporter);
 }
 
-async function exportCharacterModelHeadless({ race, gender, customizations, geosetIds, hideGeosetIds, excludeAnimationIds = [], exportSuffix = '' }) {
+async function exportCharacterModelHeadless({ race, gender,fileDataIdOverride, customizations, geosetIds, hideGeosetIds, excludeAnimationIds = [], exportSuffix = '' }) {
 	try {
 		await CharMaterialRenderer.init(); // Ensure shaders are loaded and compiled
-		console.log('[headless] Starting export for', { race, gender, customizations, geosetIds, hideGeosetIds });
+		console.log('[headless] Starting export for', { race, gender, fileDataIdOverride, customizations, geosetIds, hideGeosetIds });
 		const lookups = await initializeCharacterCaches();
 		// 1. Find model for race/gender
 		const modelMap = lookups.chrRaceXChrModelMap.get(race);
@@ -208,7 +208,7 @@ async function exportCharacterModelHeadless({ race, gender, customizations, geos
 		const modelID = modelMap.get(genderNum);
 		console.log('[headless] ModelID for gender', genderNum, ':', modelID);
 		if (!modelID) throw new Error('Invalid gender for race');
-		const fileDataID = lookups.chrModelIDToFileDataID.get(modelID);
+		const fileDataID = fileDataIdOverride || lookups.chrModelIDToFileDataID.get(modelID);
 		console.log('[headless] fileDataID for modelID', modelID, ':', fileDataID, 'Available modelIDs:', Array.from(lookups.chrModelIDToFileDataID.entries()));
 		if (!fileDataID) {
 			console.log('[headless] No fileDataID for modelID', modelID, 'in chrModelIDToFileDataID:', Array.from(lookups.chrModelIDToFileDataID.keys()));

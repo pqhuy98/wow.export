@@ -9,6 +9,7 @@
 	],
 	"scripts": {
 		"build": "bun build.js win-x64",
+		"build-debug": "bun build.js win-x64-debug",
 		"build-linux": "bun build.js linux-x64"
 	},
 	"repository": {
