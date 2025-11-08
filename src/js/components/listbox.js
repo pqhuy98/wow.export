@@ -186,11 +186,20 @@ module.exports = {
 				} catch (e) {
 					// Regular expression did not compile, skip filtering.
 				}
-			} else {
-				const filter = this.debouncedFilter.trim().toLowerCase();
-				if (filter.length > 0)
-					res = res.filter(e => e.toLowerCase().includes(filter));
+		} else {
+			const q = this.debouncedFilter.trim();
+			if (q.length > 0) {
+				const words = q.split(/ +/).filter(Boolean).map((w) => w.toLowerCase());
+				res = res.filter((e) => {
+					const nameLc = e.toLowerCase();
+					// Extract fileDataID from format "filename [12345]"
+					const start = e.indexOf(' [');
+					const end = e.lastIndexOf(']');
+					const idStr = (start > -1 && end > -1) ? e.substring(start + 2, end) : '';
+					return words.every((w) => nameLc.includes(w) || idStr.includes(w));
+				});
 			}
+		}
 
 			let hasChanges = false;
 			const newSelection = this.selection.filter((item) => {
