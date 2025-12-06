@@ -259,7 +259,7 @@ class M2Renderer {
 				log.write(`Created SkinnedMesh with ${m2.bones.length} bones, materials with skinning enabled`);
 								
 				if (!this.animationMixer && M2AnimationConverter.hasAnimations(m2))
-					this.initializeAnimationMixer(skinnedMesh);
+					await this.initializeAnimationMixer(skinnedMesh);
 			} else {
 				this.meshGroup.add(new THREE.Mesh(geometry, this.materials));
 				log.write('Created basic mesh (no skeleton');
@@ -361,9 +361,16 @@ class M2Renderer {
 	 * Initialize animation mixer and create animation clips
 	 * @param {THREE.SkinnedMesh} skinnedMesh - The SkinnedMesh to bind the mixer to
 	 */
-	initializeAnimationMixer(skinnedMesh) {
+	async initializeAnimationMixer(skinnedMesh) {
 		if (!this.skeleton || !skinnedMesh)
 			return;
+
+		// Ensure external .anim chunks are loaded before building clips.
+		try {
+			await this.m2.loadAnims();
+		} catch (e) {
+			log.write('Failed to load animations for viewer: %s', e?.message ?? e);
+		}
 
 		this.animationRoot = new THREE.Group();
 		this.animationRoot.name = 'AnimationRoot';

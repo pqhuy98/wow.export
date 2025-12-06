@@ -503,8 +503,8 @@ class M2Exporter {
 				}
 	
 			} else {
-				json.addProperty('bones', bonesExcludeAnimations(this.m2, this.excludedAnimIds));
 				await this.m2.loadAnims();
+				json.addProperty('bones', bonesExcludeAnimations(this.m2, this.excludedAnimIds));
 				json.addProperty('animations', this.m2.animations);
 			}
 
