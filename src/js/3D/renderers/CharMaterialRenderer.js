@@ -248,10 +248,27 @@ class CharMaterialRenderer {
 		this.gl.clearColor(0, 0, 0, 0);
 		this.gl.disable(this.gl.DEPTH_TEST);
 
-		// order this.textureTargets by key
-		this.textureTargets.sort((a, b) => a.id - b.id);
-		
-		for (const layer of this.textureTargets) {
+		// order this.textureTargets by key and remove duplicates
+		const sortedTargets = [...this.textureTargets].sort((a, b) => {
+			if (a.id !== b.id) {
+				return a.id - b.id;
+			}
+			// If same id, maintain original order (stable sort)
+			return 0;
+		});
+
+		// Remove duplicates: same id and same section.X/Y/Width/Height
+		const seen = new Set();
+		const uniqueTargets = sortedTargets.filter(target => {
+			const key = `${target.id}_${target.section.X}_${target.section.Y}_${target.section.Width}_${target.section.Height}`;
+			if (seen.has(key)) {
+				return false;
+			}
+			seen.add(key);
+			return true;
+		});
+
+		for (const layer of uniqueTargets) {
 			// Hide underwear based on settings
 			if (!core.view.config.chrIncludeBaseClothing && (layer.textureLayer.ChrModelTextureTargetID[0] == 13 || layer.textureLayer.ChrModelTextureTargetID[0] == 14))
 				continue;
