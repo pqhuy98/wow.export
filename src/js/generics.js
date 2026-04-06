@@ -14,6 +14,11 @@ const log = require('./log');
 const https = require('https');
 const http = require('http');
 
+/** Prefer IPv4 + HTTP/1.1 ALPN for Blizzard TACT/CDN; avoids flaky HTTP/2 + Range on some edges. */
+const blizzardHttpsAgent = new https.Agent({ keepAlive: true, family: 4, maxSockets: 64 });
+const defaultHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 64 });
+const defaultHttpAgent = new http.Agent({ keepAlive: true, maxSockets: 64 });
+
 /**
  * Async wrapper for http.get()/https.get().
  * The module used is determined by the prefix of the URL.
@@ -130,35 +135,106 @@ const readJSON = async (file, ignoreComments = false) => {
 	}
 };
 
-function requestData(url, partialOfs, partialLen) {
+function isBlizzardCdnHost(hostname) {
+	return /\.blizzard\.com$/i.test(hostname) || /\.battle\.net$/i.test(hostname);
+}
+
+/**
+ * Single GET (follows redirects by delegating to requestData).
+ * Blizzard hosts: IPv4 + ALPN http/1.1 + dedicated agent (see curl --http1.1 -r vs HTTP/2 failures).
+ */
+function requestDataSingleHop(url, partialOfs, partialLen) {
 	return new Promise((resolve, reject) => {
-		const options = {
-			headers: {
-				'User-Agent': constants.USER_AGENT
-			}
+		let parsed;
+		try {
+			parsed = new URL(url);
+		} catch (e) {
+			return reject(new Error(`Invalid URL: ${url}`));
+		}
+
+		const isHttps = parsed.protocol === 'https:';
+		const blizzard = isBlizzardCdnHost(parsed.hostname);
+		const headers = {
+			'User-Agent': constants.USER_AGENT,
 		};
-		
+
 		if (partialOfs > -1 && partialLen > -1)
-			options.headers.Range = `bytes=${partialOfs}-${partialOfs + partialLen - 1}`;
-		
-		const protocol = url.startsWith('https') ? https : http;
-		const req = protocol.get(url, options, res => {
-			if (res.statusCode == 301 || res.statusCode == 302) {
-				log.write("Got redirect to " + res.headers.location);
-				return resolve(requestData(res.headers.location, partialOfs, partialLen));
+			headers.Range = `bytes=${partialOfs}-${partialOfs + partialLen - 1}`;
+
+		const options = {
+			hostname: parsed.hostname,
+			port: parsed.port || (isHttps ? 443 : 80),
+			path: parsed.pathname + parsed.search,
+			method: 'GET',
+			headers,
+			agent: isHttps
+				? (blizzard ? blizzardHttpsAgent : defaultHttpsAgent)
+				: defaultHttpAgent,
+		};
+
+		if (blizzard) {
+			options.family = 4;
+			if (isHttps)
+				options.ALPNProtocols = ['http/1.1'];
+		}
+
+		const protocol = isHttps ? https : http;
+		const req = protocol.request(options, (res) => {
+			if (res.statusCode === 301 || res.statusCode === 302) {
+				const loc = res.headers.location;
+				if (!loc)
+					return reject(new Error('Redirect without Location header'));
+				log.write('Got redirect to ' + loc);
+				res.resume();
+				return resolve(requestData(new URL(loc, url).href, partialOfs, partialLen));
 			}
 
-			if (res.statusCode < 200 || res.statusCode > 302)
+			if (res.statusCode < 200 || res.statusCode > 302) {
+				res.resume();
 				return reject(new Error(`Status Code: ${res.statusCode}`));
-			
+			}
+
 			const chunks = [];
-			res.on('data', chunk => chunks.push(chunk));
+			res.on('data', (chunk) => chunks.push(chunk));
 			res.on('end', () => resolve(Buffer.concat(chunks)));
+			res.on('error', reject);
 		});
-		
+
 		req.on('error', reject);
+		req.setTimeout(600000, () => {
+			req.destroy();
+			reject(new Error('Request timeout'));
+		});
 		req.end();
 	});
+}
+
+function isRetryableDownloadError(err) {
+	const code = err && err.code;
+	const msg = (err && err.message) ? err.message : '';
+	if (code === 'ECONNRESET' || code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || code === 'EPIPE')
+		return true;
+	if (/socket hang up|timeout/i.test(msg))
+		return true;
+	return false;
+}
+
+async function requestData(url, partialOfs, partialLen) {
+	const maxAttempts = 4;
+	let lastErr;
+	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		try {
+			return await requestDataSingleHop(url, partialOfs, partialLen);
+		} catch (err) {
+			lastErr = err;
+			if (!isRetryableDownloadError(err) || attempt === maxAttempts)
+				throw err;
+			const delay = Math.min(400 * attempt * attempt, 8000);
+			log.write(`requestData retry ${attempt}/${maxAttempts} after ${err.message} (wait ${delay}ms)`);
+			await new Promise((r) => setTimeout(r, delay));
+		}
+	}
+	throw lastErr;
 }
 
 /**
